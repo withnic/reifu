@@ -83,14 +83,17 @@ func ResolveVersionInfo(info *debug.BuildInfo, version, commit, date string) Ver
 }
 
 func (v VersionInfo) FormatText() string {
-	commit := v.Commit
-	if len(commit) > 7 {
-		commit = commit[:7]
+	var parts []string
+	if v.Commit != "" && v.Commit != "unknown" {
+		commit := v.Commit
+		if len(commit) > 7 {
+			commit = commit[:7]
+		}
+		if v.Dirty {
+			commit += "-dirty"
+		}
+		parts = append(parts, commit)
 	}
-	if v.Dirty && commit != "unknown" {
-		commit += "-dirty"
-	}
-	parts := []string{commit}
 	if v.Date != "" {
 		parts = append(parts, v.Date)
 	}

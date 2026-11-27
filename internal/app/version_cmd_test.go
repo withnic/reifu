@@ -32,12 +32,13 @@ func TestResolveVersionInfo(t *testing.T) {
 		t.Fatalf("expected ldflags override, got %+v", override)
 	}
 
-	// Missing buildinfo falls back to dev / unknown.
+	// Missing buildinfo falls back to dev / unknown, omitting unknown from text output.
 	fallback := ResolveVersionInfo(nil, "", "", "")
 	if fallback.Version != "dev" || fallback.Commit != "unknown" || fallback.Dirty {
 		t.Fatalf("unexpected fallback: %+v", fallback)
 	}
-	if !strings.Contains(fallback.FormatText(), "reifu dev (unknown, ") {
-		t.Fatalf("unexpected fallback format: %q", fallback.FormatText())
+	fallbackText := fallback.FormatText()
+	if !strings.HasPrefix(fallbackText, "reifu dev (go") || strings.Contains(fallbackText, "unknown") {
+		t.Fatalf("unexpected fallback format: %q", fallbackText)
 	}
 }
