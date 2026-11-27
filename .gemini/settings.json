@@ -1,0 +1,39 @@
+{
+  "context": {
+    "fileName": "AGENTS.md"
+  },
+  "hooks": {
+    "AfterAgent": [
+      {
+        "hooks": [
+          {
+            "command": "go run ./cmd/reifu hook verify",
+            "type": "command"
+          }
+        ]
+      }
+    ]
+  },
+  "tools": {
+    "allowed": [
+      "run_shell_command(go build *)",
+      "run_shell_command(go test *)",
+      "run_shell_command(go vet *)",
+      "run_shell_command(go mod *)",
+      "run_shell_command(go version)",
+      "run_shell_command(gofmt *)",
+      "run_shell_command(git status*)",
+      "run_shell_command(git diff*)",
+      "run_shell_command(git log*)",
+      "run_shell_command(reifu version)",
+      "run_shell_command(reifu status*)",
+      "run_shell_command(reifu link --check)",
+      "run_shell_command(reifu hook verify)"
+    ],
+    "exclude": [
+      "run_shell_command(git push *)",
+      "run_shell_command(git reset --hard*)",
+      "run_shell_command(rm -rf *)"
+    ]
+  }
+}

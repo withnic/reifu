@@ -1,0 +1,87 @@
+{
+  "version": 1,
+  "project": {
+    "name": "",
+    "preset": "ts-electron"
+  },
+  "agents": {
+    "targets": [
+      "claude",
+      "codex",
+      "gemini"
+    ],
+    "create_missing": false
+  },
+  "links": {
+    "mode": "auto",
+    "targets": [
+      "CLAUDE.md",
+      "GEMINI.md"
+    ]
+  },
+  "permissions": {
+    "allow_commands": [
+      "npm install",
+      "npm run dev",
+      "npm run format",
+      "npm run lint",
+      "npm run typecheck",
+      "npm test",
+      "npm run build",
+      "npm run package",
+      "reifu version",
+      "reifu status*",
+      "reifu link --check",
+      "reifu hook verify"
+    ],
+    "deny_commands": [
+      "git push *",
+      "git reset --hard*",
+      "rm -rf *"
+    ],
+    "deny_paths": [
+      ".env",
+      ".env.*",
+      "**/.env",
+      "**/.env.*"
+    ]
+  },
+  "sandbox": {
+    "mode": "workspace-write",
+    "approval_policy": "never",
+    "network_access": false
+  },
+  "hooks": {
+    "verify_command": "reifu hook verify"
+  },
+  "workflow": {
+    "stack": "TypeScript / Electron",
+    "linter": "Biome または ESLint + Prettier + tsc --noEmit（npm run lint / npm run typecheck）",
+    "setup_note": "Step 1 または Phase 1 で `package.json`（Electron・TypeScript・Main/Preload/Renderer 構成）を作成し、`scripts`（`format` / `lint` / `typecheck` / `test` / `build` / `package`）を定義します。Electron のセキュリティ前提として `contextIsolation: true`・`nodeIntegration: false`・`sandbox: true` を維持してください。",
+    "require_files": [
+      "package.json"
+    ],
+    "commands": [
+      { "step": "Setup",     "run": "npm install" },
+      { "step": "Run",       "run": "npm run dev" },
+      { "step": "Format",    "run": "npm run format" },
+      { "step": "Lint",      "run": "npm run lint" },
+      { "step": "Typecheck", "run": "npm run typecheck" },
+      { "step": "Test",      "run": "npm test" },
+      { "step": "Build",     "run": "npm run build" },
+      { "step": "Package",   "run": "npm run package" }
+    ],
+    "verify_steps": [
+      ["npm", "run", "lint"],
+      ["npm", "run", "typecheck"],
+      ["npm", "test"]
+    ],
+    "gitignore": [
+      "node_modules/",
+      "dist/",
+      "out/",
+      "release/",
+      "coverage/"
+    ]
+  }
+}

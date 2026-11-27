@@ -1,0 +1,75 @@
+{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "command": "go run ./cmd/reifu hook verify",
+            "type": "command"
+          }
+        ]
+      }
+    ]
+  },
+  "permissions": {
+    "allow": [
+      "Bash(go build *)",
+      "Bash(go test *)",
+      "Bash(go vet *)",
+      "Bash(go mod *)",
+      "Bash(go version)",
+      "Bash(gofmt *)",
+      "Bash(git status*)",
+      "Bash(git diff*)",
+      "Bash(git log*)",
+      "Bash(reifu version)",
+      "Bash(reifu status*)",
+      "Bash(reifu link --check)",
+      "Bash(reifu hook verify)"
+    ],
+    "deny": [
+      "Bash(git push *)",
+      "Bash(git reset --hard*)",
+      "Bash(rm -rf *)",
+      "Read(.env)",
+      "Read(.env.*)",
+      "Read(**/.env)",
+      "Read(**/.env.*)",
+      "Edit(.env)",
+      "Edit(.env.*)",
+      "Edit(**/.env)",
+      "Edit(**/.env.*)",
+      "Write(.env)",
+      "Write(.env.*)",
+      "Write(**/.env)",
+      "Write(**/.env.*)",
+      "Read(~/.ssh/**)",
+      "Edit(~/.ssh/**)",
+      "Write(~/.ssh/**)",
+      "Read(~/.aws/**)",
+      "Edit(~/.aws/**)",
+      "Write(~/.aws/**)",
+      "Read(~/.gnupg/**)",
+      "Edit(~/.gnupg/**)",
+      "Write(~/.gnupg/**)",
+      "Edit(C:/Windows/**)",
+      "Write(C:/Windows/**)",
+      "Edit(C:/Program Files/**)",
+      "Write(C:/Program Files/**)",
+      "Edit(C:/Program Files (x86)/**)",
+      "Write(C:/Program Files (x86)/**)",
+      "Edit(.claude/settings.json)",
+      "Write(.claude/settings.json)",
+      "Edit(.codex/config.toml)",
+      "Write(.codex/config.toml)",
+      "Edit(.gemini/settings.json)",
+      "Write(.gemini/settings.json)",
+      "Read(.claude/settings.local.json)",
+      "Edit(.claude/settings.local.json)",
+      "Write(.claude/settings.local.json)",
+      "Read(.gemini/settings.local.json)",
+      "Edit(.gemini/settings.local.json)",
+      "Write(.gemini/settings.local.json)"
+    ]
+  }
+}

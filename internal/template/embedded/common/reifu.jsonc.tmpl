@@ -1,0 +1,18 @@
+{
+  // Project settings managed by reifu (Single Source of Truth).
+  // Edit this file and run `reifu sync` to propagate changes to all agents.
+  "version": [[ .Config.Version ]],
+  "project": [[ json .Config.Project ]],
+  "agents": [[ json .Config.Agents ]],
+  "links": [[ json .Config.Links ]],
+  "permissions": {
+    // Add project commands here or import additions with reifu sync --import.
+    "allow_commands": [[ json .Config.Permissions.AllowCommands ]],
+    "deny_commands": [[ json .Config.Permissions.DenyCommands ]],
+    "deny_paths": [[ json .Config.Permissions.DenyPaths ]]
+  },
+  "sandbox": [[ json .Config.Sandbox ]],
+  "hooks": [[ json .Config.Hooks ]],
+  // Preset workflow: require_files / commands / verify_steps / gitignore.
+  "workflow": [[ json .Config.Workflow ]]
+}

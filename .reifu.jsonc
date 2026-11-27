@@ -1,0 +1,78 @@
+{
+  // Project settings managed by reifu (Single Source of Truth).
+  // Edit this file and run `reifu sync` to propagate changes to all agents.
+  "version": 1,
+  "project": {
+    "name": "reifu",
+    "preset": "go-cli"
+  },
+  "agents": {
+    "targets": ["claude", "codex", "gemini"],
+    "create_missing": false
+  },
+  "links": {
+    "mode": "auto",
+    "targets": ["CLAUDE.md", "GEMINI.md"]
+  },
+  "permissions": {
+    // Add project commands here or import additions with reifu sync --import.
+    "allow_commands": [
+      "go build *",
+      "go test *",
+      "go vet *",
+      "go mod *",
+      "go version",
+      "gofmt *",
+      "git status*",
+      "git diff*",
+      "git log*",
+      "reifu version",
+      "reifu status*",
+      "reifu link --check",
+      "reifu hook verify"
+    ],
+    "deny_commands": [
+      "git push *",
+      "git reset --hard*",
+      "rm -rf *"
+    ],
+    "deny_paths": [
+      ".env",
+      ".env.*",
+      "**/.env",
+      "**/.env.*"
+    ]
+  },
+  "sandbox": {
+    "mode": "workspace-write",
+    "approval_policy": "never",
+    "network_access": false
+  },
+  "hooks": {
+    // Run reifu's own verify hook via `go run` so contributors do not need reifu preinstalled.
+    "verify_command": "go run ./cmd/reifu hook verify"
+  },
+  "workflow": {
+    "stack": "Go 1.23+（標準ライブラリのみ / CLI）",
+    "linter": "gofmt -s -w . / go vet ./...",
+    "setup_note": "Go 1.23+ 標準ライブラリのみでビルド・テストできます。",
+    "require_files": ["go.mod"],
+    "commands": [
+      { "step": "Format",  "run": "gofmt -s -w ." },
+      { "step": "Lint",    "run": "go vet ./..." },
+      { "step": "Test",    "run": "go test -v -race ./..." },
+      { "step": "Build",   "run": "CGO_ENABLED=0 go build ./cmd/reifu" },
+      { "step": "Install", "run": "go install ./cmd/reifu" }
+    ],
+    "verify_steps": [
+      ["gofmt", "-s", "-w", "."],
+      ["go", "vet", "./..."],
+      ["go", "test", "./..."]
+    ],
+    "gitignore": [
+      "/reifu",
+      "/reifu.exe",
+      "*.exe"
+    ]
+  }
+}

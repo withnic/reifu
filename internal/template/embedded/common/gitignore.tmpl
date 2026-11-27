@@ -1,0 +1,17 @@
+# Reifu runtime / lock / temporary files
+.reifu.state.json
+.reifu.lock
+.reifu.tmp.*
+BLOCKED_REPORT.md
+
+# AI agent local settings (may contain personal overrides or secrets)
+.claude/settings.local.json
+.gemini/settings.local.json
+
+# Secrets
+.env
+.env.*
+[[ if .Gitignore ]]
+# Preset-specific ignores ([[ .Preset ]])
+[[ range .Gitignore ]][[ . ]]
+[[ end ]][[ end ]]

@@ -1,0 +1,82 @@
+{
+  "version": 1,
+  "project": {
+    "name": "",
+    "preset": "go-cli"
+  },
+  "agents": {
+    "targets": [
+      "claude",
+      "codex",
+      "gemini"
+    ],
+    "create_missing": false
+  },
+  "links": {
+    "mode": "auto",
+    "targets": [
+      "CLAUDE.md",
+      "GEMINI.md"
+    ]
+  },
+  "permissions": {
+    "allow_commands": [
+      "go mod download",
+      "go run *",
+      "gofmt *",
+      "go vet *",
+      "go test *",
+      "go build *",
+      "reifu version",
+      "reifu status*",
+      "reifu link --check",
+      "reifu hook verify"
+    ],
+    "deny_commands": [
+      "git push *",
+      "git reset --hard*",
+      "rm -rf *"
+    ],
+    "deny_paths": [
+      ".env",
+      ".env.*",
+      "**/.env",
+      "**/.env.*"
+    ]
+  },
+  "sandbox": {
+    "mode": "workspace-write",
+    "approval_policy": "never",
+    "network_access": false
+  },
+  "hooks": {
+    "verify_command": "reifu hook verify"
+  },
+  "workflow": {
+    "stack": "Go 1.23+（CLI）",
+    "linter": "gofmt -s -w . / go vet ./...",
+    "setup_note": "Step 1 または Phase 1 で `go mod init <module>` を実行して `go.mod` を作成します。",
+    "require_files": [
+      "go.mod"
+    ],
+    "commands": [
+      { "step": "Setup",  "run": "go mod download" },
+      { "step": "Run",    "run": "go run ." },
+      { "step": "Format", "run": "gofmt -s -w ." },
+      { "step": "Lint",   "run": "go vet ./..." },
+      { "step": "Test",   "run": "go test ./..." },
+      { "step": "Build",  "run": "go build ./..." }
+    ],
+    "verify_steps": [
+      ["gofmt", "-s", "-w", "."],
+      ["go", "vet", "./..."],
+      ["go", "test", "./..."]
+    ],
+    "gitignore": [
+      "*.exe",
+      "*.test",
+      "*.out",
+      "coverage.out"
+    ]
+  }
+}

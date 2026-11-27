@@ -1,0 +1,81 @@
+{
+  "version": 1,
+  "project": {
+    "name": "",
+    "preset": "ts-web"
+  },
+  "agents": {
+    "targets": [
+      "claude",
+      "codex",
+      "gemini"
+    ],
+    "create_missing": false
+  },
+  "links": {
+    "mode": "auto",
+    "targets": [
+      "CLAUDE.md",
+      "GEMINI.md"
+    ]
+  },
+  "permissions": {
+    "allow_commands": [
+      "npm install",
+      "npm run dev",
+      "npm run format",
+      "npm run lint",
+      "npm test",
+      "npm run build",
+      "reifu version",
+      "reifu status*",
+      "reifu link --check",
+      "reifu hook verify"
+    ],
+    "deny_commands": [
+      "git push *",
+      "git reset --hard*",
+      "rm -rf *"
+    ],
+    "deny_paths": [
+      ".env",
+      ".env.*",
+      "**/.env",
+      "**/.env.*"
+    ]
+  },
+  "sandbox": {
+    "mode": "workspace-write",
+    "approval_policy": "never",
+    "network_access": false
+  },
+  "hooks": {
+    "verify_command": "reifu hook verify"
+  },
+  "workflow": {
+    "stack": "TypeScript / Node.js",
+    "linter": "Biome または ESLint + Prettier（npm run lint / npm run format）",
+    "setup_note": "Step 1 または Phase 1 で `npm init` 等により `package.json` を作成し、リンター・フォーマッター（Biome または ESLint + Prettier）とテストの `scripts`（`format` / `lint` / `test` / `build`）を定義します。",
+    "require_files": [
+      "package.json"
+    ],
+    "commands": [
+      { "step": "Setup",  "run": "npm install" },
+      { "step": "Run",    "run": "npm run dev" },
+      { "step": "Format", "run": "npm run format" },
+      { "step": "Lint",   "run": "npm run lint" },
+      { "step": "Test",   "run": "npm test" },
+      { "step": "Build",  "run": "npm run build" }
+    ],
+    "verify_steps": [
+      ["npm", "run", "lint"],
+      ["npm", "test"]
+    ],
+    "gitignore": [
+      "node_modules/",
+      "dist/",
+      ".next/",
+      "coverage/"
+    ]
+  }
+}

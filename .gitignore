@@ -1,0 +1,31 @@
+# Build artifacts
+/reifu
+/reifu.exe
+dist/
+*.exe
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+coverage.out
+
+# Reifu runtime / lock / temporary files
+.reifu.state.json
+.reifu.lock
+.reifu.tmp.*
+
+# AI agent local files / failure reports
+BLOCKED_REPORT.md
+.claude/settings.local.json
+.gemini/settings.local.json
+
+# Secrets / environment files
+.env
+.env.*
+
+# OS / Editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

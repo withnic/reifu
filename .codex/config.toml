@@ -1,0 +1,7 @@
+# Codex CLI プロジェクトローカル設定（霊符 / reifu）
+approval_policy = "never"
+sandbox_mode = "workspace-write"
+
+[sandbox_workspace_write]
+# ネットワークアクセスを遮断（オフラインビルド・テスト完結、git push 防止）
+network_access = false

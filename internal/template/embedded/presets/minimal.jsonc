@@ -1,0 +1,60 @@
+{
+  "version": 1,
+  "project": {
+    "name": "",
+    "preset": "minimal"
+  },
+  "agents": {
+    "targets": [
+      "claude",
+      "codex",
+      "gemini"
+    ],
+    "create_missing": false
+  },
+  "links": {
+    "mode": "auto",
+    "targets": [
+      "CLAUDE.md",
+      "GEMINI.md"
+    ]
+  },
+  "permissions": {
+    "allow_commands": [
+      "reifu version",
+      "reifu status*",
+      "reifu link --check",
+      "reifu hook verify"
+    ],
+    "deny_commands": [
+      "git push *",
+      "git reset --hard*",
+      "rm -rf *"
+    ],
+    "deny_paths": [
+      ".env",
+      ".env.*",
+      "**/.env",
+      "**/.env.*"
+    ]
+  },
+  "sandbox": {
+    "mode": "workspace-write",
+    "approval_policy": "never",
+    "network_access": false
+  },
+  "hooks": {
+    "verify_command": ""
+  },
+  "workflow": {
+    "stack": "言語非依存（設定・ドキュメント管理）",
+    "linter": "（必要に応じて .reifu.jsonc の workflow.verify_steps で設定）",
+    "commands": [
+      { "step": "Setup",      "run": "reifu sync --create" },
+      { "step": "Status",     "run": "reifu status" },
+      { "step": "Link check", "run": "reifu link --check" },
+      { "step": "Verify",     "run": "reifu status --quiet" },
+      { "step": "Sync",       "run": "reifu sync" }
+    ]
+  }
+}

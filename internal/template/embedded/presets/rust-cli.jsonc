@@ -1,0 +1,81 @@
+{
+  "version": 1,
+  "project": {
+    "name": "",
+    "preset": "rust-cli"
+  },
+  "agents": {
+    "targets": [
+      "claude",
+      "codex",
+      "gemini"
+    ],
+    "create_missing": false
+  },
+  "links": {
+    "mode": "auto",
+    "targets": [
+      "CLAUDE.md",
+      "GEMINI.md"
+    ]
+  },
+  "permissions": {
+    "allow_commands": [
+      "cargo fetch",
+      "cargo check *",
+      "cargo run *",
+      "cargo fmt *",
+      "cargo clippy *",
+      "cargo test *",
+      "cargo build *",
+      "reifu version",
+      "reifu status*",
+      "reifu link --check",
+      "reifu hook verify"
+    ],
+    "deny_commands": [
+      "git push *",
+      "git reset --hard*",
+      "rm -rf *"
+    ],
+    "deny_paths": [
+      ".env",
+      ".env.*",
+      "**/.env",
+      "**/.env.*"
+    ]
+  },
+  "sandbox": {
+    "mode": "workspace-write",
+    "approval_policy": "never",
+    "network_access": false
+  },
+  "hooks": {
+    "verify_command": "reifu hook verify"
+  },
+  "workflow": {
+    "stack": "Rust (Cargo / CLI)",
+    "linter": "cargo fmt --check / cargo clippy --all-targets",
+    "setup_note": "Step 1 または Phase 1 で `cargo init` を実行して `Cargo.toml` を作成します。",
+    "require_files": [
+      "Cargo.toml"
+    ],
+    "commands": [
+      { "step": "Setup",  "run": "cargo fetch" },
+      { "step": "Run",    "run": "cargo run" },
+      { "step": "Format", "run": "cargo fmt" },
+      { "step": "Lint",   "run": "cargo clippy --all-targets -- -D warnings" },
+      { "step": "Test",   "run": "cargo test" },
+      { "step": "Build",  "run": "cargo build --release" }
+    ],
+    "verify_steps": [
+      ["cargo", "fmt", "--check"],
+      ["cargo", "clippy", "--all-targets"],
+      ["cargo", "test"]
+    ],
+    "gitignore": [
+      "target/",
+      "*.pdb"
+    ]
+  }
+}
