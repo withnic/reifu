@@ -15,10 +15,11 @@ const CurrentSchemaVersion SchemaVersion = 1
 type LinkMode string
 
 const (
-	LinkModeAuto    LinkMode = "auto"
-	LinkModeHard    LinkMode = "hard"
-	LinkModeSymlink LinkMode = "symlink"
-	LinkModeCopy    LinkMode = "copy"
+	LinkModeAuto     LinkMode = "auto"
+	LinkModeHard     LinkMode = "hard"
+	LinkModeSymlink  LinkMode = "symlink"
+	LinkModeCopy     LinkMode = "copy"
+	LinkModeJunction LinkMode = "junction"
 )
 
 type AgentName string
@@ -51,23 +52,37 @@ type ReifuConfig struct {
 	Project     ProjectMeta      `json:"project"`
 	Agents      AgentsConfig     `json:"agents"`
 	Links       LinksConfig      `json:"links"`
+	Skills      SkillsConfig     `json:"skills,omitempty"`
 	Permissions PermissionsModel `json:"permissions"`
 	Sandbox     SandboxModel     `json:"sandbox"`
 	Hooks       HooksModel       `json:"hooks"`
 	Workflow    WorkflowModel    `json:"workflow,omitempty"`
 }
 
-// MarshalJSON keeps the optional runner section absent for existing configs.
+// MarshalJSON omits optional sections when unset and preserves empty skill targets.
 func (c ReifuConfig) MarshalJSON() ([]byte, error) {
 	type config ReifuConfig
 	var runner *RunnerConfig
 	if c.Runner.Implementer != "" || c.Runner.Reviewer != "" || len(c.Runner.Agents) != 0 {
 		runner = &c.Runner
 	}
+	type skillsJSON struct {
+		Enabled *bool     `json:"enabled,omitempty"`
+		Source  string    `json:"source,omitempty"`
+		Targets *[]string `json:"targets,omitempty"`
+	}
+	var skills *skillsJSON
+	if c.Skills.Enabled != nil || c.Skills.Source != "" || c.Skills.Targets != nil {
+		skills = &skillsJSON{Enabled: c.Skills.Enabled, Source: c.Skills.Source}
+		if c.Skills.Targets != nil {
+			skills.Targets = &c.Skills.Targets
+		}
+	}
 	return json.Marshal(struct {
 		config
 		Runner *RunnerConfig `json:"runner,omitempty"`
-	}{config: config(c), Runner: runner})
+		Skills *skillsJSON   `json:"skills,omitempty"`
+	}{config: config(c), Runner: runner, Skills: skills})
 }
 
 type ProjectMeta struct {
@@ -82,6 +97,35 @@ type LinksConfig struct {
 	Mode    LinkMode `json:"mode"`
 	Targets []string `json:"targets"`
 }
+type SkillsConfig struct {
+	Enabled *bool    `json:"enabled,omitempty"`
+	Source  string   `json:"source,omitempty"`
+	Targets []string `json:"targets,omitempty"`
+}
+
+func (c ReifuConfig) SkillsEnabled() bool {
+	return c.Skills.Enabled == nil || *c.Skills.Enabled
+}
+
+func (c ReifuConfig) EffectiveSkillsSource() string {
+	if c.Skills.Source == "" {
+		return ".agents/skills"
+	}
+	return c.Skills.Source
+}
+
+func (c ReifuConfig) EffectiveSkillsTargets(agents []AgentName) []string {
+	if c.Skills.Targets != nil {
+		return c.Skills.Targets
+	}
+	for _, agent := range agents {
+		if agent == AgentClaude {
+			return []string{".claude/skills"}
+		}
+	}
+	return nil
+}
+
 type PermissionsModel struct {
 	AllowCommands []string `json:"allow_commands"`
 	DenyCommands  []string `json:"deny_commands"`
@@ -147,6 +191,9 @@ func (c ReifuConfig) Validate() error {
 		return invalid("version", fmt.Errorf("unsupported schema version %d", c.Version))
 	}
 	if err := ValidatePresetName(c.Project.Preset); err != nil {
+		return err
+	}
+	if err := c.validateSkills(); err != nil {
 		return err
 	}
 	seenLinks := make(map[string]struct{}, len(c.Links.Targets))
@@ -243,6 +290,31 @@ func (c ReifuConfig) Validate() error {
 				return invalid(fmt.Sprintf("workflow.verify_steps[%d][%d]", i, j), fmt.Errorf("contains a control character"))
 			}
 		}
+	}
+	return nil
+}
+
+func (c ReifuConfig) validateSkills() error {
+	source := c.EffectiveSkillsSource()
+	if !validRelativePath(source) {
+		return invalid("skills.source", fmt.Errorf("invalid relative path %q", source))
+	}
+	source = normalizeLinkTargetKey(source)
+	targets := c.EffectiveSkillsTargets(c.Agents.Targets)
+	seen := make(map[string]struct{}, len(targets))
+	for i, target := range targets {
+		field := fmt.Sprintf("skills.targets[%d]", i)
+		if !validRelativePath(target) {
+			return invalid(field, fmt.Errorf("invalid relative path %q", target))
+		}
+		key := normalizeLinkTargetKey(target)
+		if _, dup := seen[key]; dup {
+			return invalid(field, fmt.Errorf("duplicate skills target %q", target))
+		}
+		if key == source || strings.HasPrefix(key, source+"/") || strings.HasPrefix(source, key+"/") {
+			return invalid(field, fmt.Errorf("skills target %q overlaps source %q", target, c.EffectiveSkillsSource()))
+		}
+		seen[key] = struct{}{}
 	}
 	return nil
 }

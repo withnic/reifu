@@ -90,25 +90,10 @@ func canonicalRoot(root string) (string, error) {
 }
 
 func withinRoot(root, target string) (string, error) {
-	portable := strings.ReplaceAll(target, "\\", "/")
-	parts := strings.Split(portable, "/")
-	if portable == "" || strings.HasPrefix(portable, "/") || strings.Contains(portable, ":") || strings.ContainsFunc(portable, unicode.IsControl) {
-		return "", fmt.Errorf("invalid project-relative path %q", target)
-	}
-	for _, part := range parts {
-		if part == ".." || (part != "." && (strings.HasSuffix(part, ".") || strings.HasSuffix(part, " "))) {
-			return "", fmt.Errorf("invalid path component %q in %q", part, target)
-		}
-	}
-	relative := filepath.FromSlash(portable)
-	if !filepath.IsLocal(relative) || filepath.Clean(relative) == "." {
-		return "", fmt.Errorf("invalid project-relative path %q", target)
-	}
-	canonical, err := canonicalRoot(root)
+	canonical, path, err := projectPath(root, target)
 	if err != nil {
 		return "", err
 	}
-	path := filepath.Join(canonical, relative)
 	if _, err := resolveWithin(canonical, path, 0); err != nil {
 		return "", fmt.Errorf("validate target %q: %w", target, err)
 	}
@@ -117,6 +102,28 @@ func withinRoot(root, target string) (string, error) {
 		return "", fmt.Errorf("validate target parent %q: %w", target, err)
 	}
 	return filepath.Join(parent, filepath.Base(path)), nil
+}
+
+func projectPath(root, target string) (string, string, error) {
+	portable := strings.ReplaceAll(target, "\\", "/")
+	parts := strings.Split(portable, "/")
+	if portable == "" || strings.HasPrefix(portable, "/") || strings.Contains(portable, ":") || strings.ContainsFunc(portable, unicode.IsControl) {
+		return "", "", fmt.Errorf("invalid project-relative path %q", target)
+	}
+	for _, part := range parts {
+		if part == ".." || (part != "." && (strings.HasSuffix(part, ".") || strings.HasSuffix(part, " "))) {
+			return "", "", fmt.Errorf("invalid path component %q in %q", part, target)
+		}
+	}
+	relative := filepath.FromSlash(portable)
+	if !filepath.IsLocal(relative) || filepath.Clean(relative) == "." {
+		return "", "", fmt.Errorf("invalid project-relative path %q", target)
+	}
+	canonical, err := canonicalRoot(root)
+	if err != nil {
+		return "", "", err
+	}
+	return canonical, filepath.Join(canonical, relative), nil
 }
 
 func resolveWithin(root, path string, depth int) (string, error) {

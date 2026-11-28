@@ -28,6 +28,7 @@ type ReifuState struct {
 	LastSyncedAt    time.Time                 `json:"last_synced_at"`
 	MasterSHA256    string                    `json:"master_sha256"`
 	ManagedCommands []string                  `json:"managed_commands"`
+	ManagedSkills   map[string][]string       `json:"managed_skills,omitempty"`
 	Targets         map[AgentName]TargetState `json:"targets"`
 }
 
@@ -53,6 +54,7 @@ type StatusReport struct {
 	StateMissing bool                       `json:"state_missing"`
 	HasIssues    bool                       `json:"has_issues"`
 	Links        []LinkReport               `json:"links"`
+	Skills       []LinkReport               `json:"skills,omitempty"`
 	Targets      map[AgentName]TargetReport `json:"targets"`
 }
 

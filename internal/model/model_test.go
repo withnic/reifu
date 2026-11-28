@@ -74,6 +74,66 @@ func TestConfigValidation(t *testing.T) {
 	}
 }
 
+func TestSkillsDefaultsAndJSON(t *testing.T) {
+	var config ReifuConfig
+	if !config.SkillsEnabled() || config.EffectiveSkillsSource() != ".agents/skills" {
+		t.Fatal("unexpected default skills settings")
+	}
+	if targets := config.EffectiveSkillsTargets([]AgentName{AgentClaude}); len(targets) != 1 || targets[0] != ".claude/skills" {
+		t.Fatalf("Claude defaults = %v", targets)
+	}
+	if targets := config.EffectiveSkillsTargets([]AgentName{AgentCodex}); targets != nil {
+		t.Fatalf("non-Claude defaults = %v", targets)
+	}
+	for _, value := range []any{config, ReifuState{}, StatusReport{}} {
+		data, err := json.Marshal(value)
+		if err != nil || strings.Contains(string(data), "skills") {
+			t.Fatalf("optional field in %s: %v", data, err)
+		}
+	}
+	if err := json.Unmarshal([]byte(`{"skills":{"enabled":false,"source":"custom","targets":[]}}`), &config); err != nil {
+		t.Fatal(err)
+	}
+	data, err := json.Marshal(config)
+	if err != nil || !strings.Contains(string(data), `"targets":[]`) {
+		t.Fatalf("explicit empty targets lost: %s, %v", data, err)
+	}
+	targets := config.EffectiveSkillsTargets([]AgentName{AgentClaude})
+	if config.SkillsEnabled() || config.EffectiveSkillsSource() != "custom" || targets == nil || len(targets) != 0 {
+		t.Fatal("explicit skills settings were not respected")
+	}
+}
+
+func TestSkillsValidation(t *testing.T) {
+	base := ReifuConfig{Version: 1, Project: ProjectMeta{Preset: "minimal"}}
+	for _, path := range []string{"/abs", "C:\\abs", "..", "part/../other", ".", "name\npart", "NUL.md"} {
+		for _, skills := range []SkillsConfig{{Source: path}, {Targets: []string{path}}} {
+			config := base
+			config.Skills = skills
+			if err := config.Validate(); err == nil {
+				t.Errorf("accepted invalid path %q in %+v", path, skills)
+			}
+		}
+	}
+	for _, targets := range [][]string{
+		{".AGENTS\\skills"}, {".agents"}, {".agents/skills/sub"}, {"out/skills", "./OUT\\skills"},
+	} {
+		config := base
+		config.Skills.Targets = targets
+		if err := config.Validate(); err == nil {
+			t.Errorf("accepted overlapping or duplicate target %v", targets)
+		}
+	}
+	base.Skills.Targets = []string{".agents/skills-other"}
+	if err := base.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	base.Links.Mode = LinkModeJunction
+	if err := base.Validate(); err == nil {
+		t.Fatal("accepted junction as a links.mode input")
+	}
+}
+
 func TestPresetBoundary(t *testing.T) {
 	for _, name := range []string{"A", "go-cli", "Custom_1", strings.Repeat("a", 64)} {
 		if err := ValidatePresetName(name); err != nil {
