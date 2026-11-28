@@ -10,11 +10,7 @@ import (
 	"github.com/withnic/reifu/internal/model"
 )
 
-type AgentCommand struct {
-	Name     string   `json:"name"`
-	Argv     []string `json:"argv"`
-	IsCustom bool     `json:"is_custom"`
-}
+type AgentCommand = model.AgentCommand
 
 func ResolveAgent(cfg model.ReifuConfig, name string) (AgentCommand, error) {
 	cfg.ApplyDefaults()
@@ -48,7 +44,7 @@ func ResolveAgent(cfg model.ReifuConfig, name string) (AgentCommand, error) {
 
 // lookPath resolves bare names via PATH and relative paths against the
 // project root, which is also the agent's working directory.
-func (a AgentCommand) lookPath(root string) (string, error) {
+func lookPath(root string, a AgentCommand) (string, error) {
 	name := a.Argv[0]
 	if strings.ContainsAny(name, `/\`) && !filepath.IsAbs(name) {
 		name = filepath.Join(root, filepath.FromSlash(name))

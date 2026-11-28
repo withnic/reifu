@@ -61,6 +61,10 @@ func TestHelperAgentProcess(t *testing.T) {
 	}
 	fmt.Fprintf(os.Stdout, "%s %s\r\n", role, phase)
 	fmt.Fprint(os.Stderr, "stderr output\r\n")
+	if os.Getenv("REIFU_HELPER_MODE") == "heartbeat" {
+		time.Sleep(100 * time.Millisecond)
+		fmt.Fprintln(os.Stdout, "after heartbeat")
+	}
 	if os.Getenv("REIFU_HELPER_MODE") == "follow" {
 		limit := time.Now().Add(10 * time.Second)
 		for {
@@ -172,7 +176,7 @@ func TestResolveAgent(t *testing.T) {
 	if err := os.Chmod(filepath.Join(root, "bin", "agent.exe"), 0755); err != nil {
 		t.Fatal(err)
 	}
-	if got, err := (AgentCommand{Name: "local", Argv: []string{"bin/agent.exe"}}).lookPath(root); err != nil || got != filepath.Join(root, "bin", "agent.exe") {
+	if got, err := lookPath(root, AgentCommand{Name: "local", Argv: []string{"bin/agent.exe"}}); err != nil || got != filepath.Join(root, "bin", "agent.exe") {
 		t.Errorf("relative agent path resolved to %q (%v), want it under the project root", got, err)
 	}
 	delete(cfg.Runner.Agents, "antigravity")
@@ -246,6 +250,130 @@ func TestRunFullLoopAndHistory(t *testing.T) {
 	gitOK(t, opts.Root, "add", ".reifu.state.json")
 	if _, err := CommitAll(context.Background(), opts.Root, "forbidden"); err == nil {
 		t.Fatal("committed a prestaged runtime file")
+	}
+}
+
+func TestRunEvents(t *testing.T) {
+	opts, progress := fixture(t, true)
+	opts.HeartbeatInterval = 10 * time.Millisecond
+	t.Setenv("REIFU_HELPER_MODE", "heartbeat")
+	var events []model.RunEvent
+	opts.EventSink = func(event model.RunEvent) { events = append(events, event) }
+	result, err := Run(context.Background(), opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []model.RunEventType{model.EventRunStarted}
+	for range 2 {
+		want = append(want, model.EventPhaseStarted)
+		for range 2 {
+			want = append(want, model.EventStepStarted, model.EventCommit, model.EventStepCompleted)
+		}
+		want = append(want, model.EventPhaseCompleted)
+	}
+	want = append(want, model.EventRunCompleted)
+	var got []model.RunEventType
+	var logs strings.Builder
+	var heartbeats, phaseIndex int
+	var step string
+	for _, event := range events {
+		if event.SchemaVersion != 1 || event.Timestamp.IsZero() || event.Timestamp.Location() != time.UTC || event.RunID != result.State.RunID {
+			t.Fatalf("event metadata: %+v", event)
+		}
+		if event.Type == model.EventPhaseStarted {
+			phaseIndex++
+		}
+		if event.Phase != "" && (event.PhaseIndex != phaseIndex || event.PhaseTotal != 2 || event.Phase != result.State.Phases[phaseIndex-1].Name) {
+			t.Fatalf("phase metadata: %+v", event)
+		}
+		switch event.Type {
+		case model.EventStepStarted:
+			step, heartbeats = event.Step, 0
+			logs.Reset()
+			if event.Warning == "" || event.Agent == "" || event.Path == "" {
+				t.Fatalf("step metadata: %+v", event)
+			}
+		case model.EventLog:
+			if event.Step != step || event.Agent == "" || event.Text == "" || strings.ContainsRune(event.Text, '\r') {
+				t.Fatalf("log event: %+v", event)
+			}
+			logs.WriteString(event.Text)
+			continue
+		case model.EventHeartbeat:
+			if event.Step != step || event.Agent == "" || event.ElapsedMS < 10 {
+				t.Fatalf("heartbeat event: %+v", event)
+			}
+			heartbeats++
+			continue
+		case model.EventCommit:
+			if event.Step != step || event.Commit == "" || heartbeats == 0 {
+				t.Fatalf("commit after %d heartbeats: %+v", heartbeats, event)
+			}
+			if actual := logs.String(); actual != step+" "+event.Phase+"\nstderr output\nafter heartbeat\n" &&
+				actual != "stderr output\n"+step+" "+event.Phase+"\nafter heartbeat\n" {
+				t.Fatalf("unexpected step output %q", actual)
+			}
+		case model.EventStepCompleted:
+			if event.Step != step || event.Agent == "" || event.Path == "" || event.Commit == "" {
+				t.Fatalf("step completion: %+v", event)
+			}
+			step = ""
+		}
+		got = append(got, event.Type)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("events: got %v, want %v", got, want)
+	}
+	first, last := events[0].State, events[len(events)-1].State
+	if first == nil || last == nil || last.Summary().Completed != 2 {
+		t.Fatalf("run snapshots: start=%+v end=%+v", first, last)
+	}
+	for _, phase := range first.Phases {
+		if phase.Status != model.PhasePending || phase.ImplementCommit != "" || phase.ReviewCommit != "" {
+			t.Fatalf("start snapshot was modified: %+v", phase)
+		}
+	}
+	if strings.Contains(progress.String(), "stderr output") || strings.Contains(progress.String(), "... running") {
+		t.Fatalf("duplicated progress: %s", progress)
+	}
+}
+
+func TestRunFailureEvents(t *testing.T) {
+	for mode, status := range map[string]model.PhaseStatus{"fail-review": model.PhaseFailed, "block": model.PhaseBlocked} {
+		t.Run(mode, func(t *testing.T) {
+			opts, _ := fixture(t, false)
+			t.Setenv("REIFU_HELPER_MODE", mode)
+			var events []model.RunEvent
+			opts.EventSink = func(event model.RunEvent) { events = append(events, event) }
+			if _, err := Run(context.Background(), opts); err == nil {
+				t.Fatal("expected run failure")
+			}
+			if len(events) < 2 {
+				t.Fatalf("too few events: %v", events)
+			}
+			phase, run := events[len(events)-2], events[len(events)-1]
+			if phase.Type != model.EventPhaseFailed || phase.Status != status || phase.Error == "" || phase.PhaseIndex != 1 || phase.PhaseTotal != 2 ||
+				run.Type != model.EventRunFailed || run.Status != status || run.Error == "" || run.State == nil || run.State.Summary().Status != status {
+				t.Fatalf("terminal events: phase=%+v run=%+v", phase, run)
+			}
+		})
+	}
+}
+
+func TestRunPlanEvent(t *testing.T) {
+	opts, _ := fixture(t, false)
+	opts.DryRun = true
+	var events []model.RunEvent
+	opts.EventSink = func(event model.RunEvent) { events = append(events, event) }
+	result, err := Run(context.Background(), opts)
+	if err != nil || len(events) != 1 || events[0].Type != model.EventRunPlan || events[0].Plan == nil ||
+		!reflect.DeepEqual(result.Plan, events[0].Plan) || events[0].SchemaVersion != 1 {
+		t.Fatalf("plan=%+v events=%+v err=%v", result.Plan, events, err)
+	}
+	for _, name := range []string{".reifu", "01_alpha-implement.txt", "01_alpha-review.txt"} {
+		if _, err := os.Lstat(filepath.Join(opts.Root, name)); !os.IsNotExist(err) {
+			t.Fatalf("dry run created %s or stat failed: %v", name, err)
+		}
 	}
 }
 

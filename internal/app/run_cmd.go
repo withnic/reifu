@@ -5,14 +5,18 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
+	"time"
 
 	"github.com/withnic/reifu/internal/jsonc"
 	"github.com/withnic/reifu/internal/model"
 	"github.com/withnic/reifu/internal/runner"
 	"github.com/withnic/reifu/internal/syncer"
+	"github.com/withnic/reifu/internal/sysenv"
 )
 
 type notifyFlag model.NotifyMode
@@ -38,7 +42,7 @@ func (n *notifyFlag) Set(value string) error {
 	return nil
 }
 
-func (c CLI) runPhases(args []string) error {
+func (c CLI) runPhases(args []string) (runErr error) {
 	f := c.flags("run", "[dir]")
 	opts := runner.Options{Progress: c.Stderr}
 	f.StringVar(&opts.Implementer, "implementer", "", "implementation agent (defaults to runner.implementer)")
@@ -53,9 +57,54 @@ func (c CLI) runPhases(args []string) error {
 	f.BoolVar(&opts.DryRun, "dry-run", false, "show the plan without running agents or writing files")
 	f.Var((*notifyFlag)(&opts.Notify), "notify", "notify on completion or stop (off, end, phase; bare flag means end)")
 	asJSON := f.Bool("json", false, "emit the plan or final run state as JSON")
+	streamJSON := f.Bool("stream-json", false, "emit realtime run events as NDJSON")
+	cancelOnStdinEOF := f.Bool("cancel-on-stdin-eof", false, "cancel the run when stdin closes")
 	root, err := c.projectRoot(f, "run", args)
 	if err != nil {
 		return err
+	}
+	if *streamJSON && *asJSON {
+		return errors.New("--stream-json and --json are mutually exclusive")
+	}
+	var result runner.Result
+	if *streamJSON {
+		encoder := json.NewEncoder(c.Stdout)
+		encoder.SetEscapeHTML(false)
+		var mu sync.Mutex
+		var terminal bool
+		var encodeErr error
+		opts.EventSink = func(event model.RunEvent) {
+			mu.Lock()
+			defer mu.Unlock()
+			switch event.Type {
+			case model.EventRunPlan, model.EventRunCompleted, model.EventRunFailed:
+				terminal = true
+			}
+			if encodeErr == nil {
+				if err := encoder.Encode(event); err != nil {
+					encodeErr = fmt.Errorf("write run event: %w", err)
+				}
+			}
+		}
+		opts.Progress = io.Discard
+		opts.Notifier = func(n sysenv.Notification) { sysenv.Notify(n, c.Stderr) }
+		defer func() {
+			if runErr != nil && !terminal {
+				status := model.PhaseFailed
+				if model.ExitCodeOf(runErr) == model.ExitDrift {
+					status = model.PhaseBlocked
+				}
+				event := model.RunEvent{
+					SchemaVersion: 1, Type: model.EventRunFailed, Timestamp: time.Now().UTC(),
+					Status: status, Error: runErr.Error(), State: result.State,
+				}
+				if result.State != nil {
+					event.RunID = result.State.RunID
+				}
+				opts.EventSink(event)
+			}
+			runErr = errors.Join(runErr, encodeErr)
+		}()
 	}
 	if err := c.rejectHomeDir(root); err != nil {
 		return err
@@ -74,10 +123,25 @@ func (c CLI) runPhases(args []string) error {
 			return fmt.Errorf("validate %s: %w", syncer.MasterPath, err)
 		}
 	}
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	sigCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	result, err := runner.Run(ctx, opts)
+	ctx, cancel := context.WithCancel(sigCtx)
+	defer cancel()
+	if *cancelOnStdinEOF && !opts.DryRun && c.Stdin != nil {
+		go func() {
+			var buf [256]byte
+			for ctx.Err() == nil {
+				if _, err := c.Stdin.Read(buf[:]); err != nil {
+					cancel()
+					return
+				}
+			}
+		}()
+	}
+	result, err = runner.Run(ctx, opts)
 	switch {
+	case *streamJSON:
+		return err
 	case result.Plan != nil && *asJSON:
 		return errors.Join(err, json.NewEncoder(c.Stdout).Encode(result.Plan))
 	case result.State != nil && *asJSON:

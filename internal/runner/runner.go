@@ -9,7 +9,9 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
+	"sync"
 	"time"
 	"unicode"
 	"unicode/utf8"
@@ -42,13 +44,10 @@ type Options struct {
 	Progress                                       io.Writer
 	Notify                                         model.NotifyMode
 	Notifier                                       func(sysenv.Notification)
+	EventSink                                      func(model.RunEvent)
 }
 
-type Plan struct {
-	Implementer AgentCommand   `json:"implementer"`
-	Reviewer    *AgentCommand  `json:"reviewer,omitempty"`
-	State       model.RunState `json:"state"`
-}
+type Plan = model.RunPlan
 
 type Result struct {
 	Plan  *Plan           `json:"plan,omitempty"`
@@ -61,6 +60,37 @@ type execution struct {
 	implementer, reviewer     AgentCommand
 	implementPath, reviewPath string
 	gitRepo                   bool
+	eventMu                   sync.Mutex
+}
+
+func (e *execution) emit(ev model.RunEvent) {
+	if e.EventSink == nil {
+		return
+	}
+	e.eventMu.Lock()
+	defer e.eventMu.Unlock()
+	ev.SchemaVersion = 1
+	ev.Timestamp = time.Now().UTC()
+	if ev.RunID == "" {
+		ev.RunID = e.run.RunID
+	}
+	e.EventSink(ev)
+}
+
+func (e *execution) snapshot() *model.RunState {
+	state := e.run
+	state.Phases = slices.Clone(state.Phases)
+	for i := range state.Phases {
+		if base := state.Phases[i].CommitBase; base != nil {
+			value := *base
+			state.Phases[i].CommitBase = &value
+		}
+	}
+	return &state
+}
+
+func (e *execution) phaseEvent(kind model.RunEventType, i int, phase *model.PhaseRunRecord) model.RunEvent {
+	return model.RunEvent{Type: kind, Phase: phase.Name, PhaseIndex: i + 1, PhaseTotal: len(e.run.Phases)}
 }
 
 func Run(ctx context.Context, opts Options) (Result, error) {
@@ -110,6 +140,7 @@ func Run(ctx context.Context, opts Options) (Result, error) {
 		if !e.run.NoReview {
 			plan.Reviewer = &e.reviewer
 		}
+		e.emit(model.RunEvent{Type: model.EventRunPlan, Plan: plan})
 		return Result{Plan: plan}, nil
 	}
 	if err := fsx.EnsureDirWithinRoot(root, ".reifu"); err != nil {
@@ -300,13 +331,13 @@ func (e *execution) preflight(ctx context.Context) error {
 		needsReviewer = needsReviewer || (!e.run.NoReview && step != reviewCommitStep)
 	}
 	if needsImplementer {
-		e.implementPath, err = e.implementer.lookPath(e.Root)
+		e.implementPath, err = lookPath(e.Root, e.implementer)
 		if err != nil {
 			return err
 		}
 	}
 	if needsReviewer {
-		e.reviewPath, err = e.reviewer.lookPath(e.Root)
+		e.reviewPath, err = lookPath(e.Root, e.reviewer)
 		if err != nil {
 			return err
 		}
@@ -383,6 +414,19 @@ func (e *execution) execute(ctx context.Context) (runErr error) {
 	if err := e.save(); err != nil {
 		return err
 	}
+	if e.EventSink != nil {
+		e.emit(model.RunEvent{Type: model.EventRunStarted, State: e.snapshot()})
+		defer func() {
+			event := model.RunEvent{Type: model.EventRunCompleted, Status: model.PhaseCompleted, State: e.snapshot()}
+			if runErr != nil {
+				event.Type, event.Status, event.Error = model.EventRunFailed, model.PhaseFailed, runErr.Error()
+				if e.run.Summary().Status == model.PhaseBlocked {
+					event.Status = model.PhaseBlocked
+				}
+			}
+			e.emit(event)
+		}()
+	}
 	for i := range e.run.Phases {
 		phase := &e.run.Phases[i]
 		if phase.Status == model.PhaseCompleted {
@@ -429,7 +473,7 @@ func (e *execution) summary() {
 	}
 }
 
-func (e *execution) fail(phase *model.PhaseRunRecord, err error) error {
+func (e *execution) fail(i int, phase *model.PhaseRunRecord, err error) error {
 	phase.Status = model.PhaseFailed
 	if model.ExitCodeOf(err) == model.ExitDrift {
 		phase.Status = model.PhaseBlocked
@@ -437,5 +481,8 @@ func (e *execution) fail(phase *model.PhaseRunRecord, err error) error {
 	phase.Error = err.Error()
 	saveErr := e.save()
 	e.summary()
+	event := e.phaseEvent(model.EventPhaseFailed, i, phase)
+	event.Status, event.Error, event.ElapsedMS = phase.Status, phase.Error, phase.DurationMS
+	e.emit(event)
 	return &model.ExitError{Code: model.ExitDrift, Field: phase.Name, Err: errors.Join(err, saveErr)}
 }

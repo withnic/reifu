@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/json"
 	"fmt"
@@ -10,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/withnic/reifu/internal/app"
 	"github.com/withnic/reifu/internal/fsx"
@@ -83,6 +85,10 @@ func TestPhaseAgentProcess(t *testing.T) {
 	phase := "01_first"
 	if strings.Contains(string(prompt), "02_second") {
 		phase = "02_second"
+	}
+	if os.Getenv("REIFU_CLI_TEST_WAIT") == "1" {
+		fmt.Fprintln(os.Stdout, "<agent-ready>")
+		time.Sleep(20 * time.Second)
 	}
 	if err := os.WriteFile(role+"-"+phase+".txt", []byte("agent change\n"), 0644); err != nil {
 		t.Fatal(err)
@@ -161,6 +167,127 @@ func parseCLIJSON(t *testing.T, out string, value any) {
 	if err := decoder.Decode(new(any)); err != io.EOF {
 		t.Fatalf("extra output after JSON in %q: %v", out, err)
 	}
+}
+
+func parseRunEvents(t *testing.T, stdout string) []model.RunEvent {
+	t.Helper()
+	if !strings.HasSuffix(stdout, "\n") || strings.ContainsRune(stdout, '\r') {
+		t.Fatalf("expected LF-terminated NDJSON, got %q", stdout)
+	}
+	var events []model.RunEvent
+	for _, line := range strings.Split(strings.TrimSuffix(stdout, "\n"), "\n") {
+		var event model.RunEvent
+		if err := json.Unmarshal([]byte(line), &event); err != nil || event.Type == "" || event.SchemaVersion != 1 || event.Timestamp.IsZero() {
+			t.Fatalf("invalid NDJSON event %q: %v", line, err)
+		}
+		events = append(events, event)
+	}
+	return events
+}
+
+func TestRunStreamJSONCLI(t *testing.T) {
+	t.Run("exclusive", func(t *testing.T) {
+		s := phaseCLI(t)
+		stdout, stderr := s.run(model.ExitGeneral, "run", "--stream-json", "--json")
+		if stdout != "" {
+			t.Fatalf("unexpected stdout: %q", stdout)
+		}
+		contains(t, stderr, "mutually exclusive")
+	})
+	t.Run("plan", func(t *testing.T) {
+		s := phaseCLI(t)
+		stdout, stderr := s.run(model.ExitOK, "run", "--stream-json", "--dry-run")
+		events := parseRunEvents(t, stdout)
+		if len(events) != 1 || events[0].Type != model.EventRunPlan || events[0].Plan == nil || stderr != "" {
+			t.Fatalf("stdout=%q stderr=%q", stdout, stderr)
+		}
+		missing(t, filepath.Join(s.root, ".reifu"))
+	})
+	t.Run("immediate EOF without opt-in", func(t *testing.T) {
+		s := phaseCLI(t)
+		var stdout, stderr bytes.Buffer
+		cli := app.CLI{WorkDir: s.root, Stdin: strings.NewReader(""), Stdout: &stdout, Stderr: &stderr}
+		if code := cli.Run([]string{"run", "--stream-json", "--no-review", "--no-commit"}); code != model.ExitOK || stderr.Len() != 0 {
+			t.Fatalf("exit=%d stderr=%q", code, &stderr)
+		}
+		events := parseRunEvents(t, stdout.String())
+		if events[0].Type != model.EventRunStarted || events[len(events)-1].Type != model.EventRunCompleted {
+			t.Fatalf("unexpected event boundaries: %s", &stdout)
+		}
+		var logs strings.Builder
+		for _, event := range events {
+			if event.Type == model.EventLog {
+				logs.WriteString(event.Text)
+			}
+		}
+		contains(t, logs.String(), "mock implement 01_first\n")
+		contains(t, logs.String(), "mock implement 02_second\n")
+	})
+	t.Run("preflight", func(t *testing.T) {
+		s := phaseCLI(t)
+		s.remove(".reifu.jsonc")
+		stdout, _ := s.run(model.ExitGeneral, "run", "--stream-json")
+		events := parseRunEvents(t, stdout)
+		if len(events) != 1 || events[0].Type != model.EventRunFailed || events[0].Status != model.PhaseFailed || events[0].Error == "" {
+			t.Fatalf("stdout=%q", stdout)
+		}
+		s.write("BLOCKED_REPORT.md", "blocked\n")
+		stdout, _ = s.run(model.ExitDrift, "run", "--stream-json")
+		events = parseRunEvents(t, stdout)
+		if len(events) != 1 || events[0].Type != model.EventRunFailed || events[0].Status != model.PhaseBlocked {
+			t.Fatalf("stdout=%q", stdout)
+		}
+	})
+}
+
+func TestRunCancelOnStdinEOFCLI(t *testing.T) {
+	s := phaseCLI(t)
+	t.Setenv("REIFU_CLI_TEST_WAIT", "1")
+	stdin, input := io.Pipe()
+	defer stdin.Close()
+	defer input.Close()
+	output, stdout := io.Pipe()
+	defer output.Close()
+	var stderr bytes.Buffer
+	cli := app.CLI{WorkDir: s.root, Stdin: stdin, Stdout: stdout, Stderr: &stderr}
+	done := make(chan model.ExitCode, 1)
+	go func() {
+		done <- cli.Run([]string{"run", "--stream-json", "--cancel-on-stdin-eof", "--no-review", "--no-commit", "--timeout=10s"})
+		stdout.Close()
+	}()
+	var all strings.Builder
+	var ready bool
+	scanner := bufio.NewScanner(output)
+	for scanner.Scan() {
+		line := scanner.Text()
+		all.WriteString(line + "\n")
+		if strings.Contains(line, "<agent-ready>") {
+			ready = true
+			if err := input.Close(); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if code := <-done; code != model.ExitDrift || !ready {
+		t.Fatalf("exit=%d ready=%v stderr=%q", code, ready, &stderr)
+	}
+	events := parseRunEvents(t, all.String())
+	if len(events) < 2 || events[len(events)-2].Type != model.EventPhaseFailed {
+		t.Fatalf("missing phase failure: %s", all.String())
+	}
+	last := events[len(events)-1]
+	if last.Type != model.EventRunFailed || last.Status != model.PhaseFailed || last.State == nil {
+		t.Fatalf("terminal event: %+v", last)
+	}
+	contains(t, last.Error, "context canceled")
+	saved, err := runner.LoadRun(s.root, "")
+	if err != nil || saved.RunID != last.RunID || saved.Phases[0].Status != model.PhaseFailed || saved.Phases[0].ResumeStep != "implement" {
+		t.Fatalf("checkpoint=%+v err=%v", saved, err)
+	}
+	missing(t, filepath.Join(s.root, "implement-01_first.txt"))
 }
 
 func TestPhaseRunAndLogsCLI(t *testing.T) {

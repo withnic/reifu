@@ -93,6 +93,56 @@ type RunState struct {
 	Phases      []PhaseRunRecord `json:"phases"`
 }
 
+type AgentCommand struct {
+	Name     string   `json:"name"`
+	Argv     []string `json:"argv"`
+	IsCustom bool     `json:"is_custom"`
+}
+
+type RunPlan struct {
+	Implementer AgentCommand  `json:"implementer"`
+	Reviewer    *AgentCommand `json:"reviewer,omitempty"`
+	State       RunState      `json:"state"`
+}
+
+type RunEventType string
+
+const (
+	EventRunPlan        RunEventType = "run_plan"
+	EventRunStarted     RunEventType = "run_started"
+	EventPhaseStarted   RunEventType = "phase_started"
+	EventStepStarted    RunEventType = "step_started"
+	EventLog            RunEventType = "log"
+	EventHeartbeat      RunEventType = "heartbeat"
+	EventCommit         RunEventType = "commit"
+	EventStepCompleted  RunEventType = "step_completed"
+	EventPhaseCompleted RunEventType = "phase_completed"
+	EventPhaseFailed    RunEventType = "phase_failed"
+	EventRunCompleted   RunEventType = "run_completed"
+	EventRunFailed      RunEventType = "run_failed"
+)
+
+type RunEvent struct {
+	SchemaVersion int          `json:"schema_version"`
+	Type          RunEventType `json:"type"`
+	Timestamp     time.Time    `json:"timestamp"`
+	RunID         string       `json:"run_id,omitempty"`
+	Phase         string       `json:"phase,omitempty"`
+	PhaseIndex    int          `json:"phase_index,omitempty"`
+	PhaseTotal    int          `json:"phase_total,omitempty"`
+	Step          string       `json:"step,omitempty"`
+	Agent         string       `json:"agent,omitempty"`
+	Commit        string       `json:"commit,omitempty"`
+	Path          string       `json:"path,omitempty"`
+	Text          string       `json:"text,omitempty"`
+	ElapsedMS     int64        `json:"elapsed_ms"`
+	Status        PhaseStatus  `json:"status,omitempty"`
+	Error         string       `json:"error,omitempty"`
+	Warning       string       `json:"warning,omitempty"`
+	Plan          *RunPlan     `json:"plan,omitempty"`
+	State         *RunState    `json:"state,omitempty"`
+}
+
 type PhaseRunRecord struct {
 	BaseCommit      string      `json:"base_commit,omitempty"`
 	ReviewBase      string      `json:"review_base,omitempty"`

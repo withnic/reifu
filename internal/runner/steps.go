@@ -43,13 +43,22 @@ func (e *execution) executePhase(ctx context.Context, i int, p *model.PhaseRunRe
 		return fmt.Errorf("invalid resume step %q for %q", step, p.Name)
 	}
 	start := time.Now()
+	event := e.phaseEvent(model.EventPhaseStarted, i, p)
+	event.Step = step
+	e.emit(event)
 	if err := e.runPhase(ctx, i, p, step, start); err != nil {
 		p.DurationMS += time.Since(start).Milliseconds()
-		return e.fail(p, err)
+		return e.fail(i, p, err)
 	}
 	p.DurationMS += time.Since(start).Milliseconds()
 	p.Status, p.ResumeStep, p.Error = model.PhaseCompleted, "", ""
-	return e.save()
+	if err := e.save(); err != nil {
+		return err
+	}
+	event = e.phaseEvent(model.EventPhaseCompleted, i, p)
+	event.Status, event.ElapsedMS = p.Status, p.DurationMS
+	e.emit(event)
+	return nil
 }
 
 func (e *execution) transition(p *model.PhaseRunRecord, status model.PhaseStatus, step string) error {
@@ -101,6 +110,7 @@ func (e *execution) runPhase(ctx context.Context, i int, p *model.PhaseRunRecord
 		if err := e.transition(p, model.PhaseImplemented, step); err != nil {
 			return err
 		}
+		e.stepCompleted(i, p, implementStep, e.implementer.Name, p.ImplementCommit, p.ImplementLog, time.Since(started))
 	}
 	if e.run.NoReview {
 		return nil
@@ -139,7 +149,19 @@ func (e *execution) runPhase(ctx context.Context, i int, p *model.PhaseRunRecord
 		p.CommitBase = nil
 	}
 	e.banner(i, p, reviewStep, e.reviewer, "completed", p.ReviewCommit, p.ReviewReport, time.Since(reviewStarted))
+	e.stepCompleted(i, p, reviewStep, e.reviewer.Name, p.ReviewCommit, p.ReviewReport, time.Since(reviewStarted))
 	return nil
+}
+
+func (e *execution) stepCompleted(i int, p *model.PhaseRunRecord, step, agent, sha, path string, elapsed time.Duration) {
+	if sha != "" {
+		event := e.phaseEvent(model.EventCommit, i, p)
+		event.Step, event.Commit = step, sha
+		e.emit(event)
+	}
+	event := e.phaseEvent(model.EventStepCompleted, i, p)
+	event.Step, event.Agent, event.Commit, event.Path, event.ElapsedMS = step, agent, sha, path, elapsed.Milliseconds()
+	e.emit(event)
 }
 
 func (e *execution) beforeCommit(ctx context.Context, p *model.PhaseRunRecord, status model.PhaseStatus, step string) error {
@@ -274,12 +296,25 @@ func (e *execution) agent(ctx context.Context, i int, p *model.PhaseRunRecord, s
 		ctx, cancel = context.WithTimeout(ctx, e.Timeout)
 		defer cancel()
 	}
+	event := e.phaseEvent(model.EventStepStarted, i, p)
+	event.Step, event.Agent, event.Path = step, a.Name, path
 	if a.IsCustom {
-		fmt.Fprintf(e.Progress, "warning: executing custom agent %q: %q\n", a.Name, a.Argv)
+		event.Warning = fmt.Sprintf("executing custom agent %q: %q", a.Name, a.Argv)
+		fmt.Fprintf(e.Progress, "warning: %s\n", event.Warning)
 	}
 	e.banner(i, p, step, a, "starting", "", path, 0)
+	e.emit(event)
 	start := time.Now()
-	stream := &agentStream{out: io.MultiWriter(log, e.Progress), last: start, first: true}
+	stream := &agentStream{out: log, last: start, first: true}
+	if e.EventSink == nil {
+		stream.out = io.MultiWriter(log, e.Progress)
+	} else {
+		stream.onText = func(text string) {
+			event := e.phaseEvent(model.EventLog, i, p)
+			event.Step, event.Agent, event.Text = step, a.Name, text
+			e.emit(event)
+		}
+	}
 	done := make(chan struct{})
 	heartbeatDone := make(chan struct{})
 	go func() {
@@ -295,8 +330,14 @@ func (e *execution) agent(ctx context.Context, i int, p *model.PhaseRunRecord, s
 				now := time.Now()
 				idle := now.Sub(stream.last)
 				if idle >= e.HeartbeatInterval {
-					fmt.Fprintf(e.Progress, "[%s]   ... running [%d/%d] %s (%s: %s, elapsed %s)\n",
-						now.Format("15:04:05"), i+1, len(e.run.Phases), p.Name, step, a.Name, now.Sub(start).Round(time.Millisecond))
+					if e.EventSink == nil {
+						fmt.Fprintf(e.Progress, "[%s]   ... running [%d/%d] %s (%s: %s, elapsed %s)\n",
+							now.Format("15:04:05"), i+1, len(e.run.Phases), p.Name, step, a.Name, now.Sub(start).Round(time.Millisecond))
+					} else {
+						event := e.phaseEvent(model.EventHeartbeat, i, p)
+						event.Step, event.Agent, event.ElapsedMS = step, a.Name, now.Sub(start).Milliseconds()
+						e.emit(event)
+					}
 					stream.last = now
 					idle = 0
 				}
@@ -328,6 +369,7 @@ type agentStream struct {
 	last    time.Time
 	pending []byte
 	first   bool
+	onText  func(string)
 }
 
 func (s *agentStream) Write(data []byte) (int, error) {
@@ -373,5 +415,8 @@ func (s *agentStream) writeText(final bool) error {
 		return nil
 	}
 	_, err := io.WriteString(s.out, text.String())
+	if s.onText != nil {
+		s.onText(text.String())
+	}
 	return err
 }

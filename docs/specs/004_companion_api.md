@@ -172,10 +172,10 @@
 ## 4. 受け入れ基準チェックリスト
 
 ### Phase 6: ランナーストリーム＆キャンセル
-- [ ] `internal/model` に `AgentCommand`, `RunPlan`, `RunEventType`, `RunEvent` が定義され、`internal/runner` の既存公開型と後方互換である
-- [ ] `reifu run --stream-json` が NDJSON イベント（`run_plan` / `run_started` / `phase_started` / `step_started` / `log` / `heartbeat` / `commit` / `step_completed` / `phase_completed` / `phase_failed` / `run_completed` / `run_failed`）を `stdout` にのみ出力し、同時書き込みでも JSON 行が破損しない
-- [ ] `reifu run --stream-json` が `--json` と排他（Exit `1`）であり、`--dry-run --stream-json` およびプリフライト失敗時の `run_failed` 出力が検証されている
-- [ ] `reifu run --cancel-on-stdin-eof` がデフォルト `false` であり、有効時に `stdin` クローズで実行中エージェントを安全に停止してチェックポイント保存＋終了イベント発行することがテストで検証されている
+- [x] `internal/model` に `AgentCommand`, `RunPlan`, `RunEventType`, `RunEvent` が定義され、`internal/runner` の既存公開型と後方互換である
+- [x] `reifu run --stream-json` が NDJSON イベント（`run_plan` / `run_started` / `phase_started` / `step_started` / `log` / `heartbeat` / `commit` / `step_completed` / `phase_completed` / `phase_failed` / `run_completed` / `run_failed`）を `stdout` にのみ出力し、同時書き込みでも JSON 行が破損しない
+- [x] `reifu run --stream-json` が `--json` と排他（Exit `1`）であり、`--dry-run --stream-json` およびプリフライト失敗時の `run_failed` 出力が検証されている
+- [x] `reifu run --cancel-on-stdin-eof` がデフォルト `false` であり、有効時に `stdin` クローズで実行中エージェントを安全に停止してチェックポイント保存＋終了イベント発行することがテストで検証されている
 
 ### Phase 7: コマンド JSON API・ダッシュボード状態・ドキュメント
 - [ ] `reifu preset list --json` が `[{"name":..., "source":...}]` を出力する
