@@ -191,7 +191,7 @@ reifu/
 1. **ユニットテスト（メモリ・一時ディレクトリ駆動）**:
    * `internal/model`: 全バリデーション（`version`、`preset` パストラバーサル拒否、`links.targets` 境界、`danger-full-access` × `approval_policy=never` 拒否、改行・制御文字拒否）の網羅テスト。
    * `internal/jsonc`: コメント（行・ブロック・文字列内の擬似コメント）、トレイリングカンマ、不正構文エラー行番号、および `edit.go` のコメント保持配列挿入（空配列・末尾カンマ・インラインコメント・1行配列・特殊文字エスケープ）の網羅テスト。
-   * `internal/compiler`: `.reifu.jsonc` から Claude JSON / Codex TOML / Gemini JSON への変換、既存カスタムキー・TOML コメント保持、3-way diff による `allow` / `deny` / `deny_paths`（`Read`/`Edit`/`Write`）/ `hooks` の追加・更新・削除反映、OS 別 `verify_command` 解決、TOML インジェクション耐性のテスト。
+   * `internal/compiler`: `.reifu.jsonc` から Claude JSON / Codex TOML / Gemini JSON への変換、既存カスタムキー・TOML コメント保持、3-way diff による `allow` / `deny` / `deny_paths`（`Read`/`Edit`、旧 `Write` の移行除去含む）/ `hooks` の追加・更新・削除反映、OS 別 `verify_command` 解決、TOML インジェクション耐性のテスト。
    * `internal/syncer`: 全状態（`STATE_MISSING`, `IN_SYNC`, `MASTER_UPDATED`, `DRIFTED`, `CONFLICT`, `SKIPPED`）の判定、`--import` 逆取り込みラウンドトリップ、危険コマンドおよび `deny_commands` 衝突ガードのテスト。
 2. **ファイルシステム・リンク結合テスト (`t.TempDir()`)**:
    * `os.SameFile` を使ったハードリンク作成・冪等再実行・異なるファイル存在時の非破壊保護・`--force` 上書きの検証。

@@ -44,10 +44,13 @@ func TestJSONThreeWayMerge(t *testing.T) {
 				t.Fatalf("unexpected applied settings: %s", out)
 			}
 			if tc.name == "claude" {
-				for _, verb := range []string{"Read", "Edit", "Write"} {
+				for _, verb := range []string{"Read", "Edit"} {
 					if !bytes.Contains(out, []byte(verb+"(new-path)")) || bytes.Contains(out, []byte(verb+"(old-path)")) {
 						t.Errorf("incorrect %s rules: %s", verb, out)
 					}
+				}
+				if bytes.Contains(out, []byte("Write(")) {
+					t.Errorf("unexpected Write() rule in claude settings: %s", out)
 				}
 				if !bytes.Contains(out, []byte("Bash(ask)")) || !bytes.Contains(out, []byte("Read(manual-path)")) {
 					t.Fatal(string(out))
@@ -127,18 +130,68 @@ func TestOSSpecificDenyAndSandbox(t *testing.T) {
 		t.Fatalf("unexpected windows claude settings:\n%s", winOut)
 	}
 	for _, expected := range []string{
-		"Edit(.claude/settings.json)", "Write(.claude/settings.json)",
-		"Edit(.codex/config.toml)", "Write(.codex/config.toml)",
-		"Edit(.gemini/settings.json)", "Write(.gemini/settings.json)",
-		"Read(.claude/settings.local.json)", "Edit(.claude/settings.local.json)", "Write(.claude/settings.local.json)",
-		"Read(.gemini/settings.local.json)", "Edit(.gemini/settings.local.json)", "Write(.gemini/settings.local.json)",
+		"Edit(.claude/settings.json)",
+		"Edit(.codex/config.toml)",
+		"Edit(.gemini/settings.json)",
+		"Read(.claude/settings.local.json)", "Edit(.claude/settings.local.json)",
+		"Read(.gemini/settings.local.json)", "Edit(.gemini/settings.local.json)",
 	} {
 		if !bytes.Contains(winOut, []byte(expected)) {
 			t.Errorf("missing agent config guard %s in:\n%s", expected, winOut)
 		}
 	}
+	if bytes.Contains(winOut, []byte("Write(")) {
+		t.Errorf("unexpected Write() deny rule in windows claude settings:\n%s", winOut)
+	}
 	if bytes.Contains(winOut, []byte("Read(.claude/settings.json)")) {
 		t.Errorf("shared settings.json should stay readable:\n%s", winOut)
+	}
+	// Migrating from legacy settings containing Write(...) rules removes them cleanly
+	// even when previous state is empty (e.g. first sync after git clone), rewrites
+	// standalone Write(<path>) rules to Edit(<path>), deduplicates against existing
+	// Edit(<path>) rules regardless of order, and leaves bare "Write" intact.
+	legacySettings := `{"permissions":{"deny":["Write(custom/only-write.txt)","Write(custom/dup-first.txt)","Edit(custom/dup-first.txt)","Edit(custom/dup-second.txt)","Write(custom/dup-second.txt)","Write","Read(.env)","Edit(.env)","Write(.env)","Edit(.claude/settings.json)","Write(.claude/settings.json)","Edit(C:/Windows/**)","Write(C:/Windows/**)","Edit(manual-only)"]}}`
+	migrateCfg := model.ReifuConfig{
+		Permissions: model.PermissionsModel{DenyPaths: []string{".env"}},
+		Sandbox:     cfg.Sandbox,
+	}
+	for _, tc := range []struct {
+		name  string
+		state model.TargetState
+	}{
+		{"with-previous-state", model.TargetState{
+			AppliedDenyPaths:   []string{".env"},
+			AppliedOSDenyRules: []string{"Edit(.claude/settings.json)", "Write(.claude/settings.json)", "Edit(C:/Windows/**)", "Write(C:/Windows/**)"},
+		}},
+		{"empty-previous-state", model.TargetState{}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			migratedOut, _, err := CompileClaude([]byte(legacySettings), migrateCfg, tc.state, "windows", false)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if bytes.Contains(migratedOut, []byte("Write(")) {
+				t.Fatalf("legacy Write() rules were not cleaned up:\n%s", migratedOut)
+			}
+			for _, keep := range []string{
+				"Edit(custom/only-write.txt)",
+				"Edit(custom/dup-first.txt)",
+				"Edit(custom/dup-second.txt)",
+				`"Write"`,
+				"Read(.env)", "Edit(.env)",
+				"Edit(.claude/settings.json)", "Edit(C:/Windows/**)",
+				"Edit(manual-only)",
+			} {
+				if !bytes.Contains(migratedOut, []byte(keep)) {
+					t.Errorf("expected %s to remain after migration:\n%s", keep, migratedOut)
+				}
+			}
+			for _, unique := range []string{"Edit(custom/dup-first.txt)", "Edit(custom/dup-second.txt)", "Edit(.env)", "Edit(.claude/settings.json)"} {
+				if n := bytes.Count(migratedOut, []byte(`"`+unique+`"`)); n != 1 {
+					t.Errorf("expected exactly 1 occurrence of %s, got %d:\n%s", unique, n, migratedOut)
+				}
+			}
+		})
 	}
 	// Switching from Windows to macOS replaces Windows system paths with macOS ones and enables Claude sandbox.
 	macOut, macState, err := CompileClaude(winOut, cfg, winState, "darwin", false)

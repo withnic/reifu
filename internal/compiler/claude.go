@@ -36,16 +36,18 @@ func OSDenyRules(targetOS string) []string {
 		return nil
 	}
 	var rules []string
+	// Claude Code file-permission rules match Edit(...) for both Edit and Write tools;
+	// Write(...) never matches and triggers startup warnings.
 	for _, sharedCfg := range []string{".claude/settings.json", ".codex/config.toml", ".gemini/settings.json"} {
-		rules = append(rules, "Edit("+sharedCfg+")", "Write("+sharedCfg+")")
+		rules = append(rules, "Edit("+sharedCfg+")")
 	}
 	for _, localCfg := range []string{".claude/settings.local.json", ".gemini/settings.local.json"} {
-		for _, verb := range []string{"Read", "Edit", "Write"} {
+		for _, verb := range []string{"Read", "Edit"} {
 			rules = append(rules, verb+"("+localCfg+")")
 		}
 	}
 	for _, secretDir := range []string{"~/.ssh/**", "~/.aws/**", "~/.gnupg/**"} {
-		for _, verb := range []string{"Read", "Edit", "Write"} {
+		for _, verb := range []string{"Read", "Edit"} {
 			rules = append(rules, verb+"("+secretDir+")")
 		}
 	}
@@ -63,7 +65,7 @@ func OSDenyRules(targetOS string) []string {
 		}
 	}
 	for _, p := range sysPaths {
-		rules = append(rules, "Edit("+p+")", "Write("+p+")")
+		rules = append(rules, "Edit("+p+")")
 	}
 	return rules
 }
@@ -98,9 +100,10 @@ type jsonSettings struct {
 	section, allow, deny, tool, event string
 	context, claudeSandbox            bool
 	geminiSandbox                     bool
+	normalizeWriteDeny                bool
 }
 
-var claudeSettings = jsonSettings{section: "permissions", allow: "allow", deny: "deny", tool: "Bash", event: "Stop", claudeSandbox: true}
+var claudeSettings = jsonSettings{section: "permissions", allow: "allow", deny: "deny", tool: "Bash", event: "Stop", claudeSandbox: true, normalizeWriteDeny: true}
 
 func compileJSON(existing []byte, previous, applied model.TargetState, format jsonSettings) ([]byte, model.TargetState, error) {
 	doc := make(map[string]any)
@@ -122,19 +125,27 @@ func compileJSON(existing []byte, previous, applied model.TargetState, format js
 	if err != nil {
 		return nil, model.TargetState{}, err
 	}
-	err = mergeRules(section, format.allow, wrapRules(format.tool, previous.AppliedAllowCommands), wrapRules(format.tool, applied.AppliedAllowCommands))
+	err = mergeRules(section, format.allow, wrapRules(format.tool, previous.AppliedAllowCommands), wrapRules(format.tool, applied.AppliedAllowCommands), nil)
 	if err != nil {
 		return nil, model.TargetState{}, err
 	}
-	deny := func(state model.TargetState) []string {
+	deny := func(state model.TargetState, includeLegacyWrite bool) []string {
 		rules := wrapRules(format.tool, state.AppliedDenyCommands)
-		for _, tool := range []string{"Read", "Edit", "Write"} {
+		verbs := []string{"Read", "Edit"}
+		if includeLegacyWrite {
+			verbs = append(verbs, "Write")
+		}
+		for _, tool := range verbs {
 			rules = append(rules, wrapRules(tool, state.AppliedDenyPaths)...)
 		}
 		rules = append(rules, state.AppliedOSDenyRules...)
 		return rules
 	}
-	if err := mergeRules(section, format.deny, deny(previous), deny(applied)); err != nil {
+	var normalizeDeny func(string) string
+	if format.normalizeWriteDeny {
+		normalizeDeny = normalizeClaudeWriteRule
+	}
+	if err := mergeRules(section, format.deny, deny(previous, true), deny(applied, false), normalizeDeny); err != nil {
 		return nil, model.TargetState{}, err
 	}
 	if format.context {
@@ -195,7 +206,17 @@ func wrapRules(tool string, patterns []string) []string {
 	return rules
 }
 
-func mergeRules(object map[string]any, key string, previous, desired []string) error {
+// normalizeClaudeWriteRule rewrites Claude Code path-scoped Write(<path>) rules
+// to Edit(<path>), because Claude Code's file permission checks only match Edit(...)
+// for both Edit and Write tools. Bare "Write" tool rules are left unchanged.
+func normalizeClaudeWriteRule(rule string) string {
+	if strings.HasPrefix(rule, "Write(") && strings.HasSuffix(rule, ")") && len(rule) > len("Write()") {
+		return "Edit" + rule[len("Write"):]
+	}
+	return rule
+}
+
+func mergeRules(object map[string]any, key string, previous, desired []string, normalize func(string) string) error {
 	current := []any{}
 	if value, exists := object[key]; exists {
 		var ok bool
@@ -207,12 +228,18 @@ func mergeRules(object map[string]any, key string, previous, desired []string) e
 	seen := make(map[string]bool)
 	merged := make([]any, 0, len(current)+len(desired))
 	for _, value := range current {
-		rule, ok := value.(string)
+		raw, ok := value.(string)
 		if ok {
-			if seen[rule] || (slices.Contains(previous, rule) && !slices.Contains(desired, rule)) {
+			rule := raw
+			if normalize != nil {
+				rule = normalize(raw)
+			}
+			wasManaged := slices.Contains(previous, raw) || slices.Contains(previous, rule)
+			if seen[rule] || (wasManaged && !slices.Contains(desired, rule)) {
 				continue
 			}
 			seen[rule] = true
+			value = rule
 		}
 		merged = append(merged, value)
 	}

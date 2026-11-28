@@ -226,7 +226,7 @@ type ReifuConfig struct {
 
 * **許可コマンド変換ルール**: `permissions.allow_commands` の各要素 `<cmd>` を `"Bash(<cmd>)"` に変換し、`permissions.allow` 配列へ 3-way diff マージする（重複排除）。
 * **拒否コマンド変換ルール**: `permissions.deny_commands` の各要素 `<cmd>` を `"Bash(<cmd>)"` に変換し、`permissions.deny` 配列へ 3-way diff マージする。
-* **パス拒否変換ルール**: `permissions.deny_paths` の各要素 `<p>` を `"Read(<p>)"`、`"Edit(<p>)"`、**`"Write(<p>)"`** の 3 エントリに変換し、`permissions.deny` 配列へ 3-way diff マージする。
+* **パス拒否変換ルール**: `permissions.deny_paths` の各要素 `<p>` を `"Read(<p>)"`、`"Edit(<p>)"` の 2 エントリに変換し、`permissions.deny` 配列へ 3-way diff マージする（Claude Code では `Edit(...)` が `Edit` / `Write` 等のファイル変更系ツール全般をカバーし、`Write(<path>)` ルールはマッチしないため出力しない。また既存の `permissions.deny` にパス付き `Write(<path>)` が含まれている場合は、`Edit(<path>)` へ自動正規化し、同一の `Edit(<path>)` が既にあれば重複排除する）。
 * **フック変換ルール（`hooks.Stop`）**:
   * OS 別解決済み `verify_command`（`--no-hooks` 指定時は空扱い）を以下の構造で設定する:
     ```json

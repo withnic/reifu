@@ -189,12 +189,12 @@ Go コードの変更や再ビルドなしで、JSONC ファイルを 1 個置�
 ## 5. OS 別セキュリティガードと終了コード
 
 ### 自動適用される保護
-* **OS 別システムパス・設定ファイル保護 `deny`（Claude Code コンパイル時自動付与）**:
-  * エージェント共有設定：`.claude/settings.json`, `.codex/config.toml`, `.gemini/settings.json`（Edit / Write 拒否、Read は許可）
-  * エージェント個人ローカル設定：`.claude/settings.local.json`, `.gemini/settings.local.json`（Read / Edit / Write 拒否、`.gitignore` にも自動登録）
-  * 認証ディレクトリ共通：`~/.ssh/**`, `~/.aws/**`, `~/.gnupg/**`（Read / Edit / Write 拒否）
-  * Windows：`C:/Windows/**`, `C:/Program Files/**`, `C:/Program Files (x86)/**`（Edit / Write 拒否）
-  * macOS：`/System/**`, `/Library/**`, `/etc/**`（Edit / Write 拒否）
+* **OS 別システムパス・設定ファイル保護 `deny`（Claude Code コンパイル時自動付与、Claude Code 仕様上 `Edit` ルールが `Edit`/`Write` 双方をカバー）**:
+  * エージェント共有設定：`.claude/settings.json`, `.codex/config.toml`, `.gemini/settings.json`（Edit 拒否、Read は許可）
+  * エージェント個人ローカル設定：`.claude/settings.local.json`, `.gemini/settings.local.json`（Read / Edit 拒否、`.gitignore` にも自動登録）
+  * 認証ディレクトリ共通：`~/.ssh/**`, `~/.aws/**`, `~/.gnupg/**`（Read / Edit 拒否）
+  * Windows：`C:/Windows/**`, `C:/Program Files/**`, `C:/Program Files (x86)/**`（Edit 拒否）
+  * macOS：`/System/**`, `/Library/**`, `/etc/**`（Edit 拒否）
   * Linux / WSL2：`/etc/**`, `/usr/**`, `/bin/**`, `/sbin/**`（WSL2 は `/mnt/c/Windows/**`, `/mnt/c/Program Files/**` も追加）
 * **OS 別サンドボックス**:
   * Codex CLI：全 OS で `sandbox_mode` + `approval_policy` + `[sandbox_workspace_write].network_access` を出力
