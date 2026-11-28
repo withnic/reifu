@@ -1,7 +1,6 @@
 package app
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"runtime"
@@ -114,8 +113,7 @@ func (c CLI) version(args []string) error {
 
 	info := CurrentVersionInfo()
 	if *asJSON {
-		enc := json.NewEncoder(c.Stdout)
-		enc.SetEscapeHTML(false)
+		enc := jsonEncoder(c.Stdout)
 		enc.SetIndent("", "  ")
 		return enc.Encode(info)
 	}

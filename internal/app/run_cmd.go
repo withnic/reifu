@@ -143,9 +143,9 @@ func (c CLI) runPhases(args []string) (runErr error) {
 	case *streamJSON:
 		return err
 	case result.Plan != nil && *asJSON:
-		return errors.Join(err, json.NewEncoder(c.Stdout).Encode(result.Plan))
+		return errors.Join(err, writeJSON(c.Stdout, result.Plan))
 	case result.State != nil && *asJSON:
-		return errors.Join(err, json.NewEncoder(c.Stdout).Encode(result.State))
+		return errors.Join(err, writeJSON(c.Stdout, result.State))
 	case result.Plan != nil:
 		plan := result.Plan
 		if _, err := fmt.Fprintf(c.Stdout, "Implementer %s: %q\n", plan.Implementer.Name, plan.Implementer.Argv); err != nil {

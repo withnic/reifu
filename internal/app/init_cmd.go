@@ -48,6 +48,7 @@ func (c CLI) setupProject(command string, args []string, requireNew bool) error 
 	} else {
 		force = f.Bool("force", false, "replace existing boilerplate")
 	}
+	asJSON := f.Bool("json", false, "emit a JSON setup report")
 	dryRun := f.Bool("dry-run", false, "preview changes without writing")
 	operands, err := c.parseFlags(f, command, operandsUsage, args)
 	if err != nil {
@@ -147,7 +148,10 @@ func (c CLI) setupProject(command string, args []string, requireNew bool) error 
 	if err != nil {
 		return err
 	}
-	options := syncer.Options{Create: true, Force: *force, NoHooks: *noHooks, TargetOS: string(env), Warnings: c.Stderr}
+	options := syncer.Options{Create: true, Force: *force, NoHooks: *noHooks, TargetOS: string(env)}
+	if !*asJSON {
+		options.Warnings = c.Stderr
+	}
 	syncInitial := func(options syncer.Options) (syncer.Result, error) {
 		if *noSettings {
 			return syncer.SyncSkillLinks(root, cfg, options, false)
@@ -155,6 +159,9 @@ func (c CLI) setupProject(command string, args []string, requireNew bool) error 
 		return syncer.SyncInit(root, options, files[syncer.MasterPath])
 	}
 	run := func() error {
+		var err error
+		var links []model.LinkReport
+		var result syncer.Result
 		writes := make(map[string][]byte)
 		replace := make(map[string]bool)
 		if existing == root || !*dryRun {
@@ -181,11 +188,11 @@ func (c CLI) setupProject(command string, args []string, requireNew bool) error 
 				}
 				writes[target] = proposed
 			}
-			reports, err := inspectLinks(root, cfg.Links)
+			links, err = inspectLinks(root, cfg.Links)
 			if err != nil {
 				return err
 			}
-			if err := preflightLinks(cfg.Links, reports, *force); err != nil {
+			if err := preflightLinks(cfg.Links, links, *force); err != nil {
 				return err
 			}
 			preview := options
@@ -193,11 +200,11 @@ func (c CLI) setupProject(command string, args []string, requireNew bool) error 
 			if !*dryRun {
 				preview.Warnings = nil
 			}
-			result, err := syncInitial(preview)
+			result, err = syncInitial(preview)
 			if err != nil {
 				return err
 			}
-			if *dryRun {
+			if *dryRun && !*asJSON {
 				for _, target := range result.ChangedPaths {
 					if _, err := fmt.Fprintln(c.Stdout, "Would update", target); err != nil {
 						return err
@@ -206,9 +213,32 @@ func (c CLI) setupProject(command string, args []string, requireNew bool) error 
 			}
 		} else {
 			writes = files
+			if *asJSON {
+				for _, target := range cfg.Links.Targets {
+					links = append(links, model.LinkReport{Target: target, Status: model.LinkStatusMissing})
+				}
+				if !*noSettings {
+					result, err = syncer.PlanNewProject(cfg, options, files[syncer.MasterPath])
+					if err != nil {
+						return err
+					}
+				}
+			}
+		}
+		filePaths := append([]string{}, slices.Sorted(maps.Keys(writes))...)
+		jsonReport := func() error {
+			return writeJSON(c.Stdout, model.SetupReport{
+				Command: command, Root: root, Preset: *preset, DryRun: *dryRun,
+				Files: filePaths, Links: append([]model.LinkReport{}, links...),
+				ChangedPaths: append([]string{}, result.ChangedPaths...),
+				Warnings:     append([]string{}, result.Warnings...),
+			})
 		}
 		if *dryRun {
-			for _, target := range slices.Sorted(maps.Keys(writes)) {
+			if *asJSON {
+				return jsonReport()
+			}
+			for _, target := range filePaths {
 				if _, err := fmt.Fprintln(c.Stdout, "Would write", target); err != nil {
 					return err
 				}
@@ -224,7 +254,7 @@ func (c CLI) setupProject(command string, args []string, requireNew bool) error 
 			}
 			return nil
 		}
-		for _, target := range slices.Sorted(maps.Keys(writes)) {
+		for _, target := range filePaths {
 			if parent := path.Dir(target); parent != "." {
 				if err := fsx.EnsureDirWithinRoot(root, parent); err != nil {
 					return err
@@ -238,13 +268,18 @@ func (c CLI) setupProject(command string, args []string, requireNew bool) error 
 				return err
 			}
 		}
-		if err := c.createLinks(root, cfg.Links, *force); err != nil {
+		links, err = c.createLinks(root, cfg.Links, *force, !*asJSON)
+		if err != nil {
 			return err
 		}
-		if _, err := syncInitial(options); err != nil {
+		result, err = syncInitial(options)
+		if err != nil {
 			return err
 		}
-		_, err := fmt.Fprintln(c.Stdout, "Initialized", root)
+		if *asJSON {
+			return jsonReport()
+		}
+		_, err = fmt.Fprintln(c.Stdout, "Initialized", root)
 		return err
 	}
 	if *dryRun {

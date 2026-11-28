@@ -87,6 +87,17 @@ func SyncInit(root string, options Options, master []byte) (Result, error) {
 	return sync(root, options, master)
 }
 
+// PlanNewProject previews compilation for a project directory that does not exist yet.
+func PlanNewProject(cfg model.ReifuConfig, options Options, master []byte) (Result, error) {
+	result := Result{StateMissing: true, Targets: make(map[model.AgentName]model.TargetReport)}
+	for _, agent := range cfg.Agents.Targets {
+		result.Targets[agent] = model.TargetReport{Path: targetPaths[agent], Status: model.StatusStateMissing}
+	}
+	snapshot := projectSnapshot{config: cfg, master: master}
+	_, _, _, err := snapshot.plan(options, skillPlan{}, &result)
+	return result, err
+}
+
 func sync(root string, options Options, proposed []byte) (result Result, err error) {
 	run := func() error {
 		snapshot, err := readProject(root, options.Create, proposed)
@@ -98,6 +109,7 @@ func sync(root string, options Options, proposed []byte) (result Result, err err
 		if err != nil {
 			return err
 		}
+		result.Skills = skills.reports
 		master, targets, state, err := snapshot.plan(options, skills, &result)
 		if wErr := writeWarnings(options.Warnings, result.Warnings); wErr != nil {
 			return wErr

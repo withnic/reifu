@@ -56,6 +56,53 @@ type StatusReport struct {
 	Links        []LinkReport               `json:"links"`
 	Skills       []LinkReport               `json:"skills,omitempty"`
 	Targets      map[AgentName]TargetReport `json:"targets"`
+	Runner       *RunnerStatus              `json:"runner,omitempty"`
+}
+
+type SyncReport struct {
+	Root         string                     `json:"root"`
+	DryRun       bool                       `json:"dry_run"`
+	StateMissing bool                       `json:"state_missing"`
+	ChangedPaths []string                   `json:"changed_paths"`
+	Warnings     []string                   `json:"warnings"`
+	Targets      map[AgentName]TargetReport `json:"targets"`
+	Skills       []LinkReport               `json:"skills"`
+}
+
+type LinkCommandReport struct {
+	Root      string       `json:"root"`
+	Mode      LinkMode     `json:"mode"`
+	Check     bool         `json:"check"`
+	HasIssues bool         `json:"has_issues"`
+	Links     []LinkReport `json:"links"`
+	Skills    []LinkReport `json:"skills"`
+}
+
+type SetupReport struct {
+	Command      string       `json:"command"`
+	Root         string       `json:"root"`
+	Preset       string       `json:"preset"`
+	DryRun       bool         `json:"dry_run"`
+	Files        []string     `json:"files"`
+	Links        []LinkReport `json:"links"`
+	ChangedPaths []string     `json:"changed_paths"`
+	Warnings     []string     `json:"warnings"`
+}
+
+type RunnerStatus struct {
+	Blocked   bool          `json:"blocked"`
+	GitRepo   bool          `json:"git_repo"`
+	GitDirty  bool          `json:"git_dirty"`
+	Phases    []string      `json:"phases"`
+	Agents    []AgentStatus `json:"agents"`
+	LatestRun *RunSummary   `json:"latest_run,omitempty"`
+}
+
+type AgentStatus struct {
+	Name       string `json:"name"`
+	Available  bool   `json:"available"`
+	Executable string `json:"executable,omitempty"`
+	IsCustom   bool   `json:"is_custom"`
 }
 
 type LinkReport struct {

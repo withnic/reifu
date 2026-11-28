@@ -1,11 +1,12 @@
 package app
 
 import (
-	"encoding/json"
+	"context"
 	"fmt"
 	"slices"
 
 	"github.com/withnic/reifu/internal/model"
+	"github.com/withnic/reifu/internal/runner"
 	"github.com/withnic/reifu/internal/syncer"
 	"github.com/withnic/reifu/internal/sysenv"
 )
@@ -22,17 +23,22 @@ func (c CLI) status(args []string) error {
 	if err != nil {
 		return err
 	}
-	cfg, err := projectConfig(root, true)
+	cfg, err := projectConfig(root, !*asJSON || *quiet)
 	if err != nil {
 		return err
 	}
-	linked, err := inspectLinks(root, cfg.Links)
-	if err != nil {
-		return err
-	}
-	state, err := syncer.Inspect(root)
-	if err != nil {
-		return err
+	// The JSON API can inspect runner information before reifu is initialized.
+	linked := []model.LinkReport{}
+	state := syncer.Result{StateMissing: true, Targets: map[model.AgentName]model.TargetReport{}}
+	if cfg.Version != 0 {
+		linked, err = inspectLinks(root, cfg.Links)
+		if err != nil {
+			return err
+		}
+		state, err = syncer.Inspect(root)
+		if err != nil {
+			return err
+		}
 	}
 	report := model.StatusReport{
 		Root: root, Env: string(env), Links: linked, Skills: state.Skills, Targets: state.Targets,
@@ -45,10 +51,10 @@ func (c CLI) status(args []string) error {
 		report.HasIssues = report.HasIssues || (target.Status != model.StatusSkipped && target.Status != model.StatusInSync)
 	}
 	if *asJSON {
-		enc := json.NewEncoder(c.Stdout)
-		enc.SetEscapeHTML(false)
-		if err := enc.Encode(report); err != nil {
-			return fmt.Errorf("write status JSON: %w", err)
+		runnerStatus := runner.InspectStatus(context.Background(), root, cfg)
+		report.Runner = &runnerStatus
+		if err := writeJSON(c.Stdout, report); err != nil {
+			return err
 		}
 	} else if !*quiet {
 		if err := c.printStatus(report); err != nil {

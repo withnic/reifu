@@ -15,6 +15,7 @@ func (c CLI) preset(args []string) error {
 	switch args[0] {
 	case "list":
 		f := c.flags("preset list", "")
+		asJSON := f.Bool("json", false, "emit a JSON preset list")
 		operands, err := c.parseFlags(f, "preset list", "", args[1:])
 		if err != nil {
 			return err
@@ -25,6 +26,9 @@ func (c CLI) preset(args []string) error {
 		list, err := c.Presets.List()
 		if err != nil {
 			return err
+		}
+		if *asJSON {
+			return writeJSON(c.Stdout, list)
 		}
 		for _, preset := range list {
 			if _, err := fmt.Fprintf(c.Stdout, "%s\t%s\n", preset.Name, preset.Source); err != nil {

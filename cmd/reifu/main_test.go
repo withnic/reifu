@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -347,6 +348,12 @@ func TestPhaseRunAndLogsCLI(t *testing.T) {
 	if got := s.git("log", "--all", "--format=%H", "--", ".reifu", ".reifu.run.json"); got != "" {
 		t.Fatalf("runtime files committed: %s", got)
 	}
+	out, _ = s.run(model.ExitOK, "status", "--json")
+	var status model.StatusReport
+	parseCLIJSON(t, out, &status)
+	if status.Runner == nil || status.Runner.LatestRun == nil || *status.Runner.LatestRun != state.Summary() {
+		t.Fatalf("status did not report latest run: %+v", status.Runner)
+	}
 	checkpoint := s.read(".reifu.run.json")
 	for _, tc := range []struct {
 		args []string
@@ -496,6 +503,152 @@ func TestPhaseCLIGuards(t *testing.T) {
 		out, _ := s.run(0, "help", name)
 		contains(t, out, "Usage: reifu "+name+" [options] [dir]")
 	}
+}
+
+func TestCompanionSetupJSON(t *testing.T) {
+	for _, command := range []string{"new", "init"} {
+		t.Run(command, func(t *testing.T) {
+			tmp := t.TempDir()
+			root := filepath.Join(tmp, "project")
+			s := cliTest{t: t, root: root, presets: filepath.Join(tmp, "presets")}
+			if command == "init" {
+				if err := os.Mkdir(root, 0755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			args := []string{command, root, "--preset", "go-cli", "--link-mode", "hard", "--json"}
+			var reports [2]model.SetupReport
+			for i, dryRun := range []bool{true, false} {
+				call := slices.Clone(args)
+				if dryRun {
+					call = append(call, "--dry-run")
+				}
+				out, stderr := s.run(model.ExitOK, call...)
+				if stderr != "" {
+					t.Fatalf("unexpected setup stderr: %q", stderr)
+				}
+				report := &reports[i]
+				parseCLIJSON(t, out, report)
+				if report.Command != command || report.Root != root || report.Preset != "go-cli" || report.DryRun != dryRun ||
+					!slices.Contains(report.Files, "AGENTS.md") || !slices.Contains(report.ChangedPaths, ".reifu.state.json") ||
+					len(report.Warnings) == 0 || len(report.Links) != 2 {
+					t.Fatalf("unexpected setup report: %+v", report)
+				}
+				for _, link := range report.Links {
+					if dryRun && link.Status != model.LinkStatusMissing || !dryRun && (link.Status != model.LinkStatusOK || link.Mode != model.LinkModeHard) {
+						t.Fatalf("unexpected setup link: %+v", link)
+					}
+				}
+				if dryRun {
+					missing(t, filepath.Join(root, ".reifu.jsonc"))
+					missing(t, filepath.Join(root, ".reifu.lock"))
+					if command == "new" {
+						missing(t, root)
+					}
+				}
+			}
+			if !slices.Equal(reports[0].Files, reports[1].Files) || !slices.Equal(reports[0].ChangedPaths, reports[1].ChangedPaths) {
+				t.Fatalf("dry-run plan differs from applied setup: %+v / %+v", reports[0], reports[1])
+			}
+		})
+	}
+}
+
+func TestCompanionCommandsJSON(t *testing.T) {
+	t.Setenv("PATH", "")
+	tmp := t.TempDir()
+	root := filepath.Join(tmp, "project")
+	s := cliTest{t: t, root: root, presets: filepath.Join(tmp, "presets")}
+
+	out, _ := s.run(model.ExitOK, "preset", "list", "--json")
+	var presets []template.Preset
+	parseCLIJSON(t, out, &presets)
+	if !slices.Contains(presets, template.Preset{Name: "go-cli", Source: "builtin"}) {
+		t.Fatalf("missing builtin preset: %+v", presets)
+	}
+
+	out, _ = s.run(model.ExitOK, "status", "--json", tmp)
+	var uninitialized model.StatusReport
+	parseCLIJSON(t, out, &uninitialized)
+	if !uninitialized.StateMissing || uninitialized.Runner == nil {
+		t.Fatalf("unexpected uninitialized status: %+v", uninitialized)
+	}
+
+	s.run(model.ExitOK, "new", root, "--preset", "go-cli", "--link-mode", "hard", "--no-settings")
+	skillDir := filepath.Join(root, ".agents", "skills", "example")
+	if err := os.MkdirAll(skillDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	s.write(".agents/skills/example/SKILL.md", "# Example\n")
+	for _, dryRun := range []bool{true, false} {
+		args := []string{"sync", root, "--create", "--json"}
+		if dryRun {
+			args = append(args, "--dry-run")
+		}
+		out, stderr := s.run(model.ExitOK, args...)
+		var report model.SyncReport
+		parseCLIJSON(t, out, &report)
+		if stderr != "" || report.Root != root || report.DryRun != dryRun || !report.StateMissing ||
+			!slices.Contains(report.ChangedPaths, ".reifu.state.json") || len(report.Warnings) == 0 ||
+			len(report.Targets) != 3 || len(report.Skills) != 1 {
+			t.Fatalf("unexpected sync report: %+v, stderr %q", report, stderr)
+		}
+		if dryRun {
+			missing(t, filepath.Join(root, ".reifu.state.json"))
+			missing(t, filepath.Join(root, ".claude", "skills", "example"))
+		}
+	}
+	out, _ = s.run(model.ExitOK, "sync", root, "--json")
+	var unchanged model.SyncReport
+	parseCLIJSON(t, out, &unchanged)
+	if unchanged.ChangedPaths == nil || len(unchanged.ChangedPaths) != 0 || unchanged.Warnings == nil {
+		t.Fatalf("unexpected no-op sync: %+v", unchanged)
+	}
+
+	s.remove("CLAUDE.md")
+	out, _ = s.run(model.ExitLinkIntegrity, "link", root, "--check", "--json")
+	var damaged model.LinkCommandReport
+	parseCLIJSON(t, out, &damaged)
+	if !damaged.HasIssues || !damaged.Check || len(damaged.Links) != 2 || damaged.Links[0].Status != model.LinkStatusMissing {
+		t.Fatalf("unexpected damaged link report: %+v", damaged)
+	}
+	for _, check := range []bool{false, true} {
+		args := []string{"link", root, "--json"}
+		if check {
+			args = append(args, "--check")
+		}
+		out, _ := s.run(model.ExitOK, args...)
+		var report model.LinkCommandReport
+		parseCLIJSON(t, out, &report)
+		if report.Root != root || report.Check != check || report.HasIssues || report.Mode != model.LinkModeHard ||
+			len(report.Links) != 2 || report.Links[0].Status != model.LinkStatusOK ||
+			len(report.Skills) != 1 || report.Skills[0].Status != model.LinkStatusOK {
+			t.Fatalf("unexpected link report: %+v", report)
+		}
+	}
+
+	s.write("BLOCKED_REPORT.md", "test runner block\n")
+	out, _ = s.run(model.ExitOK, "status", root, "--json")
+	var status model.StatusReport
+	parseCLIJSON(t, out, &status)
+	runnerStatus := status.Runner
+	if status.HasIssues || status.StateMissing || status.Env == "" || status.Root != root || len(status.Links) != 2 ||
+		len(status.Targets) != 3 || len(status.Skills) != 1 || runnerStatus == nil || !runnerStatus.Blocked ||
+		runnerStatus.GitRepo || runnerStatus.GitDirty || runnerStatus.Phases == nil || len(runnerStatus.Phases) != 0 ||
+		len(runnerStatus.Agents) != 4 || runnerStatus.LatestRun != nil {
+		t.Fatalf("unexpected status: %+v, runner %+v", status, runnerStatus)
+	}
+	for _, agent := range runnerStatus.Agents {
+		if agent.Available || agent.Executable != "" {
+			t.Fatalf("unexpected agent with empty PATH: %+v", agent)
+		}
+	}
+	quietOut, quietErr := s.run(model.ExitOK, "status", root, "--quiet")
+	if quietOut != "" || quietErr != "" {
+		t.Fatalf("quiet status wrote output: %q / %q", quietOut, quietErr)
+	}
+	s.write(".claude/settings.json", "{}\n")
+	s.run(model.ExitDrift, "status", root, "--quiet")
 }
 
 func TestProjectWorkflow(t *testing.T) {

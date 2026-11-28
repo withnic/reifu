@@ -315,3 +315,12 @@ reifu logs -f                         # 実装ログを追従。Ctrl+C で終了
 ## 7. 将来拡張 ToDo
 
 - `reifu preset import <file>`: 他者が作成・共有したプリセット JSONC を安全検証してユーザー設定ディレクトリへ取り込む機能
+
+## コンパニオンから CLI を呼び出す
+
+1. `reifu preset list --json` でプリセットを選ぶ。`reifu new <dir> --dry-run --json` または `reifu init <dir> --dry-run --json` で予定を表示し、適用時に `--dry-run` を外す。
+2. `reifu status <dir> --json` で設定とランナーの状態を読む。`reifu sync <dir> --dry-run --json` は変更予定と警告を返し、`reifu sync <dir> --json` で適用する。
+3. `reifu link <dir> --check --json` は Exit 3 でも結果を取得できる。リンクを作成・修復するには `reifu link <dir> --json` を使う。
+4. `reifu run <dir> --implementer codex --reviewer claude --stream-json --cancel-on-stdin-eof` を stdin パイプ付きで起動する。イベントは stdout から 1 行ずつ JSON として読み、stderr も並行して読む。中断するには親側の stdin 書き込みパイプを閉じ、終端イベントと終了コードを受け取る。`--dry-run --stream-json` では `run_plan` が 1 行返る。
+
+ランの最終結果だけ必要なら `run --json`、保存済みのサマリ一覧には `logs --list --json` を使う。

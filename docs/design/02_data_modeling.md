@@ -295,7 +295,7 @@ type ReifuConfig struct {
   * `reifu status`（通常実行）は `STATE_MISSING` と再同期推奨の案内を表示し、終了コード `0` を返す。
   * `reifu status --quiet` は未同期状態として終了コード `2` を返す。
 * `reifu sync` 実行時に `.reifu.state.json` が未存在の場合、`.reifu.jsonc` の内容を基準として各ターゲット設定へ非破壊マージ（初回ベースライン同期）を実行し、最新の SHA-256 ハッシュと適用済みルールを記録した `.reifu.state.json` を新規生成する。
-* **フック適用警告（セキュリティ対策）**: 初回ベースライン同期時、または前回 `state` と比較して `verify_command` が新規設定・変更される同期時には、設定されるフックコマンド文字列を `stderr` に明示警告する（`--no-hooks` 指定時はフックを反映しない）。
+* **フック適用警告（セキュリティ対策）**: 初回ベースライン同期時、または前回 `state` と比較して `verify_command` が新規設定・変更される同期時には、設定されるフックコマンド文字列を警告する。通常は `stderr`、`--json` 時は `warnings` に出力する。`--no-hooks` 指定時はフックの反映を抑止する。
 
 ## **5.2 状態判定マトリクス（ファイル単位）**
 
@@ -396,3 +396,40 @@ type ReifuConfig struct {
 | `1` | 一般エラー / バリデーション失敗 | 引数不正、`.reifu.jsonc` 構文エラー、バリデーション違反（パストラバーサル・危険構成等）、I/O権限エラー、対象ディレクトリ不存在 |
 | `2` | 設定ドリフト / 衝突 / 危険取り込み検知 | `sync` 時に外部変更（`DRIFTED` / `CONFLICT`）や `--import` 時の危険コマンド・矛盾を検知、または `status --quiet` で `STATE_MISSING` / ドリフト / リンク切れを検知、`hook verify` 失敗、`run` の安全停止（エージェント異常終了・タイムアウト・Ctrl+C 中断・`BLOCKED_REPORT.md` 検出） |
 | `3` | リンク整合性エラー | `link --check` 時に `CLAUDE.md` / `GEMINI.md` が `AGENTS.md` と異なる inode / 実体になっている場合 |
+
+## コンパニオン API のレスポンス
+
+操作系コマンドの `--json` は単一 JSON 値を返す。以下の必須配列は項目がなければ `[]` になる。リンク項目は既存の `LinkReport`（`target`, `status`, 任意の `mode`）、設定対象は既存の `TargetReport`（`path`, `status`）を使う。
+
+| 型 | JSON フィールド |
+| --- | --- |
+| プリセット一覧 | `name` と `source` を持つオブジェクトの配列 |
+| `SyncReport` | `root`, `dry_run`, `state_missing`, `changed_paths`（パス配列）, `warnings`（文字列配列）, `targets`（エージェント名から設定状態へのマップ）, `skills`（同期計画時のリンク状態） |
+| `LinkCommandReport` | `root`, `mode`, `check`, `has_issues`, `links`, `skills`。検査結果に問題があれば JSON 出力後に Exit 3 |
+| `SetupReport` | `command`（`new` / `init`）, `root`, `preset`, `dry_run`, `files`（雛形ファイルのパス配列）, `links`, `changed_paths`（設定・状態・スキルの同期対象パス配列）, `warnings`。dry-run の `links` は予定の宛先と現在の状態を示す |
+| `RunnerStatus` | `blocked`, `git_repo`, `git_dirty`, `phases`（拡張子なしの昇順の名前配列）, `agents`（名前昇順の `AgentStatus` 配列）, `latest_run`（取得できた場合の `RunSummary`） |
+| `AgentStatus` | `name`, `available`, `is_custom`, `executable`（検出した場合の絶対パス） |
+| `RunSummary` | `run_id`, `started_at`, `updated_at`, `status`, `completed`, `total` |
+
+`status --json` は既存のレポートに `runner` を追加する。取得できない `latest_run` は省略する。ランナーの状態は `has_issues` と `status --quiet` の終了判定から独立している。設定ファイルが未作成のディレクトリでも `status --json` は `runner` と `state_missing: true` を返す。
+
+## `RunEvent` の NDJSON スキーマ
+
+`run --stream-json` は各行を UTF-8 / LF の JSON オブジェクトとして出力する。常に `schema_version: 1`、`type`、`timestamp`（UTC RFC3339Nano）、`elapsed_ms` を含む。`elapsed_ms` が意味を持つのは `heartbeat`、`step_completed`、`phase_completed`、`phase_failed` で、他のイベントでは `0` になる。以下の追加フィールドは空なら省略する。
+
+| `type` | 主な追加フィールド |
+| --- | --- |
+| `run_plan` | `plan` |
+| `run_started` | `run_id`, `state` |
+| `phase_started` | `phase`, `phase_index`（1 始まり）, `phase_total`, `step` |
+| `step_started` | フェーズ識別情報, `step`, `agent`, `path`, `warning`（カスタムエージェント） |
+| `log` | フェーズ識別情報, `step`, `agent`, `text` |
+| `heartbeat` | フェーズ識別情報, `step`, `agent` |
+| `commit` | フェーズ識別情報, `step`, `commit` |
+| `step_completed` | フェーズ識別情報, `step`, `agent`, `commit`, `path` |
+| `phase_completed` | フェーズ識別情報, `status: "completed"` |
+| `phase_failed` | フェーズ識別情報, `status: "failed" \| "blocked"`, `error` |
+| `run_completed` | `run_id`, `status: "completed"`, `state` |
+| `run_failed` | `run_id`, `status: "failed" \| "blocked"`, `error`, `state` |
+
+ランごとの終端イベントは `run_plan`、`run_completed`、`run_failed` のうち 1 行。ランナーが終端を送る前にエラー終了した場合は、CLI が `run_failed` を補う。フォールバックの `status` は `BLOCKED_REPORT.md` による Exit 2 で `blocked`、それ以外で `failed` になる。`--resume` で `implement_commit` / `review_commit` から再開したステップでは `commit` / `step_completed` が出て、`step_started` は省略される。キャンセルとタイムアウトはどちらも `failed` になり、`error` の `context canceled` / `context deadline exceeded` で区別できる。

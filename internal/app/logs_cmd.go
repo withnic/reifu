@@ -2,7 +2,6 @@ package app
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -60,7 +59,7 @@ func (c CLI) logs(args []string) error {
 	}
 	switch {
 	case *asJSON:
-		return json.NewEncoder(c.Stdout).Encode(run)
+		return writeJSON(c.Stdout, run)
 	case follow:
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		defer stop()
@@ -99,7 +98,7 @@ func (c CLI) listRuns(root string, asJSON bool) error {
 		return err
 	}
 	if asJSON {
-		return json.NewEncoder(c.Stdout).Encode(runs)
+		return writeJSON(c.Stdout, runs)
 	}
 	if len(runs) == 0 {
 		_, err := fmt.Fprintln(c.Stdout, "No run history. Start a run with reifu run.")

@@ -48,6 +48,7 @@ func (c CLI) link(args []string) error {
 	f := c.flags("link", "[dir]")
 	mode := f.String("mode", "", "link mode: auto, hard, symlink, copy")
 	check := f.Bool("check", false, "check the configured links")
+	asJSON := f.Bool("json", false, "emit a JSON link report")
 	force := f.Bool("force", false, "replace differing destinations")
 	root, err := c.projectRoot(f, "link", args)
 	if err != nil {
@@ -79,8 +80,10 @@ func (c CLI) link(args []string) error {
 		if *check {
 			failed := false
 			for _, report := range reports {
-				if err := c.printLink(report); err != nil {
-					return err
+				if !*asJSON {
+					if err := c.printLink(report); err != nil {
+						return err
+					}
 				}
 				failed = failed || !linkOK(links.Mode, report)
 			}
@@ -88,9 +91,18 @@ func (c CLI) link(args []string) error {
 			if err != nil {
 				return err
 			}
-			for _, report := range skills {
-				if err := c.printLink(report); err != nil {
+			if *asJSON {
+				if err := writeJSON(c.Stdout, model.LinkCommandReport{
+					Root: root, Mode: links.Mode, Check: true, HasIssues: failed || issues,
+					Links: reports, Skills: append([]model.LinkReport{}, skills...),
+				}); err != nil {
 					return err
+				}
+			} else {
+				for _, report := range skills {
+					if err := c.printLink(report); err != nil {
+						return err
+					}
 				}
 			}
 			if failed || issues {
@@ -114,7 +126,18 @@ func (c CLI) link(args []string) error {
 		if _, err := syncer.SyncSkillLinks(root, cfg, syncer.Options{Force: *force, Warnings: c.Stderr}, true); err != nil {
 			return err
 		}
-		return c.createLinks(root, links, *force)
+		created, err := c.createLinks(root, links, *force, !*asJSON)
+		if err != nil || !*asJSON {
+			return err
+		}
+		skills, issues, err := syncer.InspectSkills(root, cfg)
+		if err != nil {
+			return err
+		}
+		return writeJSON(c.Stdout, model.LinkCommandReport{
+			Root: root, Mode: links.Mode, HasIssues: issues,
+			Links: created, Skills: append([]model.LinkReport{}, skills...),
+		})
 	}
 	if *check {
 		return run()
@@ -169,25 +192,30 @@ func preflightLinks(links model.LinksConfig, reports []model.LinkReport, force b
 	return nil
 }
 
-func (c CLI) createLinks(root string, links model.LinksConfig, force bool) error {
+func (c CLI) createLinks(root string, links model.LinksConfig, force, print bool) ([]model.LinkReport, error) {
+	reports := make([]model.LinkReport, 0, len(links.Targets))
 	for _, target := range links.Targets {
 		parent := path.Dir(strings.ReplaceAll(target, "\\", "/"))
 		if parent != "." {
 			if err := fsx.EnsureDirWithinRoot(root, parent); err != nil {
-				return err
+				return nil, err
 			}
 		}
 		mode, err := fsx.EnsureLink(root, linkSource, target, links.Mode, force)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		status := model.LinkStatusOK
 		if mode == model.LinkModeCopy {
 			status = model.LinkStatusCopy
 		}
-		if err := c.printLink(model.LinkReport{Target: target, Status: status, Mode: mode}); err != nil {
-			return err
+		report := model.LinkReport{Target: target, Status: status, Mode: mode}
+		reports = append(reports, report)
+		if print {
+			if err := c.printLink(report); err != nil {
+				return nil, err
+			}
 		}
 	}
-	return nil
+	return reports, nil
 }

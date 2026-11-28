@@ -1,14 +1,17 @@
 package app
 
 import (
+	"errors"
 	"fmt"
 
+	"github.com/withnic/reifu/internal/model"
 	"github.com/withnic/reifu/internal/syncer"
 	"github.com/withnic/reifu/internal/sysenv"
 )
 
 func (c CLI) sync(args []string) error {
 	f := c.flags("sync", "[dir]")
+	asJSON := f.Bool("json", false, "emit a JSON sync report")
 	var options syncer.Options
 	f.BoolVar(&options.Import, "import", false, "import external allow rules")
 	f.BoolVar(&options.Force, "force", false, "proceed despite drift or import guard")
@@ -26,8 +29,19 @@ func (c CLI) sync(args []string) error {
 	if err != nil {
 		return err
 	}
-	options.TargetOS, options.Warnings = string(env), c.Stderr
+	options.TargetOS = string(env)
+	if !*asJSON {
+		options.Warnings = c.Stderr
+	}
 	result, err := syncer.Sync(root, options)
+	if *asJSON && result.Targets != nil {
+		return errors.Join(err, writeJSON(c.Stdout, model.SyncReport{
+			Root: root, DryRun: options.DryRun, StateMissing: result.StateMissing,
+			ChangedPaths: append([]string{}, result.ChangedPaths...),
+			Warnings:     append([]string{}, result.Warnings...),
+			Targets:      result.Targets, Skills: append([]model.LinkReport{}, result.Skills...),
+		}))
+	}
 	if err != nil {
 		return err
 	}

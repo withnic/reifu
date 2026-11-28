@@ -1,6 +1,7 @@
 package app
 
 import (
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -38,7 +39,22 @@ Commands:
   run [dir]      Execute and review implementation phases
   logs [dir]     Show phase run history, logs, and reviews
   version        Show version and build commit hash (--json)
-  help [cmd]     Show help for reifu or a specific command`
+  help [cmd]     Show help for reifu or a specific command
+
+JSON output is also available for new, init, link, sync, and preset list.`
+
+func jsonEncoder(w io.Writer) *json.Encoder {
+	encoder := json.NewEncoder(w)
+	encoder.SetEscapeHTML(false)
+	return encoder
+}
+
+func writeJSON(w io.Writer, v any) error {
+	if err := jsonEncoder(w).Encode(v); err != nil {
+		return fmt.Errorf("write JSON: %w", err)
+	}
+	return nil
+}
 
 func (c CLI) Run(args []string) model.ExitCode {
 	err := c.run(args)

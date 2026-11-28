@@ -194,7 +194,7 @@ reifu/
   * 既存ファイルがある場合はそのパーミッション（`0644` 等）へ `Chmod` してから置換する（新規ファイルは `0644`）。
 * **Windows 共有違反リトライ**: Windows 環境でウイルス対策ソフトやエディタ（VS Code / Zed）が一時的にファイルハンドルを保持している場合を考慮し、`os.Rename` および `os.Link` が `ERROR_ACCESS_DENIED` / `ERROR_SHARING_VIOLATION` を返した場合は、初回 20ms から最大 5 回（20ms, 40ms, 80ms, 160ms, 320ms）の指数バックオフリトライを行う。
 * **プロセス間排他ロック (`fsx.WithFileLock`)**: 複数エージェントの同時実行による書き込み競合を防ぐため、`init` / `sync` / `link` 実行時はプロジェクトルートの `.reifu.lock` を `O_CREATE|O_EXCL` で取得し、自身の PID と UTC タイムスタンプを書き込む（タイムアウト 5 秒）。5 秒以上経過した古いロックファイルは異常終了の残骸とみなして回収するが、他プロセスとの TOCTOU 競合を避けるため回収直後に再度 `O_CREATE|O_EXCL` で排他取得を試行するループとする。`.reifu.lock` と `.reifu.tmp.*` は `.gitignore` に自動登録する。
-* **I/O ストリーム分離**: `--json` フラグ指定時、標準出力（`stdout`）には厳密にパース可能な単一 JSON のみを出力し、警告や進捗ログはすべて標準エラー出力（`stderr`）へ出力する。
+* **I/O ストリーム分離**: `--json` フラグ指定時、標準出力（`stdout`）には単一の JSON 値を出力する。`sync` とセットアップの警告はレポートの `warnings` に格納し、その他の診断テキストは標準エラー出力（`stderr`）へ送る。
 
 ## **4.5 テンプレートデリミタの衝突回避とデータ制約**
 
@@ -234,3 +234,15 @@ reifu/
    * `.reifu.state.json` 削除状態（`git clone` 直後シミュレート）からの `status --quiet`（Exit 2）および `reifu sync` ベースライン復元テスト、ならびに `.reifu.jsonc` 内の `//` コメントが `reifu sync --import` 後も保持されることの検証。
    * `preset list` / `preset export` の DI された一時設定ディレクトリ上での動作確認。
    * `CGO_ENABLED=0 go build ./cmd/reifu` および `go test -race ./...` によるデータ競合ゼロ検証。
+
+## コンパニオンとのプロセス連携
+
+コンパニオンは `reifu` をサブプロセスとして起動し、標準入出力と終了コードを扱う。`preset list`、`sync`、`link`、`new`、`init`、`status`、`logs`、`run`、`version` の `--json` は標準出力に単一の JSON 値を返す。`sync` とセットアップの警告は JSON の `warnings` で取得できる。`link --check --json` の Exit 3 でも検査結果を読める。ダッシュボードは `status --json` の `runner` から Git 状態、フェーズ、エージェントの検出結果、最新ランを取得する。Git 検査の上限は 5 秒で、最新ランは読み取りに成功した場合に返す。
+
+`run --stream-json` は `--json` と排他で、進捗と正規化済みエージェント出力を NDJSON で送る。ログファイルへの保存は継続する。イベント書き出しを直列化し、ロック取得順は `agentStream.mu` → `execution.eventMu` とする。標準出力の読み手が止まると、エージェント出力の書き込みにも背圧がかかる。親プロセスは標準出力と標準エラーを並行して読み続ける。端末通知のフォールバックは標準エラーに送り、ランサマリ書き込み失敗などの警告テキストはストリーム時に破棄する。
+
+終端イベントは 1 ラン 1 行で、ランナーが送出前に失敗したときは CLI が `run_failed` を補う。フォールバックはブロックによる Exit 2 で `blocked`、それ以外で `failed`。各行に `elapsed_ms` があり、`heartbeat`、`step_completed`、`phase_completed`、`phase_failed` 以外では `0` になる。`implement_commit` / `review_commit` から再開したステップは `commit` / `step_completed` のみを発行する。フィールドの詳細は [データモデル](02_data_modeling.md) を参照。
+
+`--cancel-on-stdin-eof` を有効にする親プロセスは、実行開始時に stdin のパイプを開いたままにする。親が書き込み側を閉じると、ランのコンテキストがキャンセルされ、子プロセスツリーを停止してチェックポイントを保存する。開始前に stdin が閉じていれば即キャンセルされ `run_failed` が出る。このフラグは dry-run では無効。ラン完了後、stdin の読み取り goroutine は `Read` が戻るか CLI プロセスが終了するまで残る。キャンセルとタイムアウトはともに `failed` で、`error` はそれぞれ `context canceled` / `context deadline exceeded` を含む。
+
+Windows の race テストで `TestFollowLog` が一度失敗した（再実行 8 回では再現せず）。状態ファイルのアトミック置換と読み取りが競合した際の一時的な共有違反やアクセス拒否が候補で、原因は未確定。最新ランの読み取りでも失敗した呼び出しでは `runner.latest_run` が省略されうる。

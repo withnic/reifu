@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"runtime"
+	"slices"
 	"strings"
 	"syscall"
 	"testing"
@@ -149,6 +150,71 @@ func requireContains(t *testing.T, body string, parts ...string) {
 		if !strings.Contains(body, part) {
 			t.Errorf("%q does not contain %q", body, part)
 		}
+	}
+}
+
+func TestInspectStatusEmpty(t *testing.T) {
+	t.Setenv("PATH", "")
+	cfg := model.ReifuConfig{Runner: model.RunnerConfig{Agents: map[string][]string{
+		"missing": {"./missing-executable"},
+	}}}
+	status := InspectStatus(context.Background(), t.TempDir(), cfg)
+	if status.GitRepo || status.GitDirty || status.Blocked || status.Phases == nil ||
+		len(status.Phases) != 0 || status.LatestRun != nil {
+		t.Fatalf("unexpected empty status: %+v", status)
+	}
+	want := []model.AgentStatus{
+		{Name: "agy"}, {Name: "claude"}, {Name: "codex"}, {Name: "gemini"}, {Name: "missing", IsCustom: true},
+	}
+	if !slices.Equal(status.Agents, want) {
+		t.Fatalf("agents = %+v, want %+v", status.Agents, want)
+	}
+}
+
+func TestInspectStatusProject(t *testing.T) {
+	options, _ := fixture(t, true)
+	ctx := context.Background()
+	result, err := Run(ctx, options)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	status := InspectStatus(ctx, options.Root, options.Config)
+	if !status.GitRepo || status.GitDirty || status.Blocked {
+		t.Fatalf("unexpected clean status: %+v", status)
+	}
+	put(t, options.Root, "untracked.txt", "dirty\n")
+	put(t, options.Root, blockedReport, "blocked\n")
+	put(t, options.Root, phasesDir+"/.md", "invalid phase name\n")
+	put(t, options.Root, phasesDir+"/README.txt", "not a phase\n")
+	if err := os.Mkdir(filepath.Join(options.Root, phasesDir, "directory.md"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	options.Config.Runner.Agents["missing"] = []string{"./missing-executable"}
+	options.Config.Runner.Agents["codex"] = options.Config.Runner.Agents["builder"]
+	status = InspectStatus(ctx, options.Root, options.Config)
+	if !status.GitRepo || !status.GitDirty || !status.Blocked || !slices.Equal(status.Phases, []string{"01_alpha", "02_beta"}) {
+		t.Fatalf("unexpected project status: %+v", status)
+	}
+	if status.LatestRun == nil || *status.LatestRun != result.State.Summary() {
+		t.Fatalf("latest run = %+v, want %+v", status.LatestRun, result.State.Summary())
+	}
+	var names []string
+	for _, agent := range status.Agents {
+		names = append(names, agent.Name)
+		switch agent.Name {
+		case "builder", "critic", "codex":
+			if !agent.Available || !agent.IsCustom || !filepath.IsAbs(agent.Executable) {
+				t.Errorf("unexpected installed custom agent: %+v", agent)
+			}
+		case "missing":
+			if agent.Available || !agent.IsCustom || agent.Executable != "" {
+				t.Errorf("unexpected missing custom agent: %+v", agent)
+			}
+		}
+	}
+	if !slices.Equal(names, []string{"agy", "builder", "claude", "codex", "critic", "gemini", "missing"}) {
+		t.Fatalf("unexpected agent order: %v", names)
 	}
 }
 

@@ -178,10 +178,10 @@
 - [x] `reifu run --cancel-on-stdin-eof` がデフォルト `false` であり、有効時に `stdin` クローズで実行中エージェントを安全に停止してチェックポイント保存＋終了イベント発行することがテストで検証されている
 
 ### Phase 7: コマンド JSON API・ダッシュボード状態・ドキュメント
-- [ ] `reifu preset list --json` が `[{"name":..., "source":...}]` を出力する
-- [ ] `reifu sync --json`（`--dry-run --json` 含む）が `SyncReport` を出力し、`stdout` に非 JSON 出力を混入させない
-- [ ] `reifu link --json`（`--check --json` 含む）が `LinkCommandReport` を出力し、`--check` 異常時は JSON 出力後に Exit `3` で終了する
-- [ ] `reifu new --json` / `reifu init --json`（`--dry-run --json` 含む）が `SetupReport` を出力する
-- [ ] `reifu status --json` が `runner`（`blocked`, `git_repo`, `git_dirty`, `phases`, `agents`, `latest_run`）を返し、エージェント未検出・`prompts/phases` 不在・非 Git 環境でも Exit `0` で動作し、既存の `has_issues` / `--quiet` 判定を壊さない
-- [ ] `docs/design/02_data_modeling.md`, `docs/design/03_architecture.md`, `README.md`, `HOWTO.md` が最新仕様に更新されている
-- [ ] `gofmt -s -w .`, `go vet ./...`, `go test -v ./...`, `CGO_ENABLED=0 go build ./cmd/reifu` がすべて成功する
+- [x] `reifu preset list --json` が `[{"name":..., "source":...}]` を出力する
+- [x] `reifu sync --json`（`--dry-run --json` 含む）が `SyncReport` を出力し、`stdout` に非 JSON 出力を混入させない
+- [x] `reifu link --json`（`--check --json` 含む）が `LinkCommandReport` を出力し、`--check` 異常時は JSON 出力後に Exit `3` で終了する
+- [x] `reifu new --json` / `reifu init --json`（`--dry-run --json` 含む）が `SetupReport` を出力する
+- [x] `reifu status --json` が `runner`（`blocked`, `git_repo`, `git_dirty`, `phases`, `agents`, `latest_run`）を返し、エージェント未検出・`prompts/phases` 不在・非 Git 環境でも Exit `0` で動作し、既存の `has_issues` / `--quiet` 判定を壊さない
+- [x] `docs/design/02_data_modeling.md`, `docs/design/03_architecture.md`, `README.md`, `HOWTO.md` が最新仕様に更新されている
+- [x] `gofmt -s -w .`, `go vet ./...`, `go test -v ./...`, `CGO_ENABLED=0 go build ./cmd/reifu` がすべて成功する

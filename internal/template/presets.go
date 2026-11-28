@@ -18,7 +18,10 @@ type Presets struct {
 	Dir string
 }
 
-type Preset struct{ Name, Source string }
+type Preset struct {
+	Name   string `json:"name"`
+	Source string `json:"source"`
+}
 
 func (p Presets) Directory() (string, error) {
 	if p.Dir != "" {
