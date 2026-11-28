@@ -104,6 +104,26 @@ reifu sync
 
 ---
 
+## コンパニオンアプリ・スクリプト連携
+
+```sh
+reifu preset list --json
+reifu new my-app --preset go-cli --dry-run --json
+reifu init ./my-app --json
+reifu sync ./my-app --dry-run --json
+reifu link ./my-app --check --json
+reifu status ./my-app --json
+reifu run ./my-app --implementer codex --reviewer claude --stream-json --cancel-on-stdin-eof
+```
+
+操作コマンドは単一 JSON 値を標準出力に返す。`link --check` はリンクに問題があると JSON を出して Exit 3 になる。`status` の `runner` で Git、フェーズ、エージェント、最新ランを確認できる。同期とセットアップの警告は `warnings` に入る。
+
+`run --stream-json` は 1 行 1 イベントで、各行に `elapsed_ms` が入る。所要時間を報告するのは `heartbeat`、`step_completed`、`phase_completed`、`phase_failed` で、それ以外では `0` になる。終端は `run_plan` / `run_completed` / `run_failed` のいずれか 1 行で、早期エラーでは CLI が `run_failed` を補う。ブロックによる Exit 2 は `blocked`、それ以外のフォールバックは `failed`。`implement_commit` / `review_commit` から再開したステップは `commit` / `step_completed` のみを発行する。端末通知のフォールバックは標準エラーに出力され、ストリーム時のランサマリ書き込み警告などは破棄される。
+
+キャンセルするまで stdin のパイプを開いたまま、標準出力と標準エラーを読み続ける。読み手が止まるとエージェント出力にも背圧がかかる。開始前から stdin が閉じている場合は即キャンセルになり、dry-run では stdin を監視しない。通常実行の stdin 監視は `Read` が戻るかプロセスが終了するまで続く。キャンセルとタイムアウトはいずれも `failed` で、`error` の `context canceled` / `context deadline exceeded` で区別できる。詳しくは [HOWTO](HOWTO.md) と [イベントスキーマ](docs/design/02_data_modeling.md) を参照。
+
+---
+
 ## ドキュメント
 
 - **[HOWTO.md](HOWTO.md)** — 実践ワークフロー・フラグ一覧・カスタムプリセット作成・OS 別セキュリティガード＆終了コード
@@ -126,21 +146,3 @@ CGO_ENABLED=0 go build ./cmd/reifu
 ## ライセンス
 
 [MIT License](LICENSE)
-
-## コンパニオンアプリ・スクリプト連携
-
-```sh
-reifu preset list --json
-reifu new my-app --preset go-cli --dry-run --json
-reifu init ./my-app --json
-reifu sync ./my-app --dry-run --json
-reifu link ./my-app --check --json
-reifu status ./my-app --json
-reifu run ./my-app --implementer codex --reviewer claude --stream-json --cancel-on-stdin-eof
-```
-
-操作コマンドは単一 JSON 値を標準出力に返す。`link --check` はリンクに問題があると JSON を出して Exit 3 になる。`status` の `runner` で Git、フェーズ、エージェント、最新ランを確認できる。同期とセットアップの警告は `warnings` に入る。
-
-`run --stream-json` は 1 行 1 イベントで、各行に `elapsed_ms` が入る。所要時間を報告するのは `heartbeat`、`step_completed`、`phase_completed`、`phase_failed` で、それ以外では `0` になる。終端は `run_plan` / `run_completed` / `run_failed` のいずれか 1 行で、早期エラーでは CLI が `run_failed` を補う。ブロックによる Exit 2 は `blocked`、それ以外のフォールバックは `failed`。`implement_commit` / `review_commit` から再開したステップは `commit` / `step_completed` のみを発行する。端末通知のフォールバックは標準エラーに出力され、ストリーム時のランサマリ書き込み警告などは破棄される。
-
-キャンセルするまで stdin のパイプを開いたまま、標準出力と標準エラーを読み続ける。読み手が止まるとエージェント出力にも背圧がかかる。開始前から stdin が閉じている場合は即キャンセルになり、dry-run では stdin を監視しない。通常実行の stdin 監視は `Read` が戻るかプロセスが終了するまで続く。キャンセルとタイムアウトはいずれも `failed` で、`error` の `context canceled` / `context deadline exceeded` で区別できる。詳しくは [HOWTO](HOWTO.md) と [イベントスキーマ](docs/design/02_data_modeling.md) を参照。

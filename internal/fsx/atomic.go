@@ -110,6 +110,24 @@ func removeTemp(path string) error {
 	return nil
 }
 
+// OpenRegular opens a regular file for reading. On Windows it retries the transient
+// sharing violation or access denial seen while a writer atomically replaces the file.
+func OpenRegular(path string) (*os.File, error) {
+	var file *os.File
+	err := retrySharing(func() error {
+		info, err := os.Stat(path)
+		if err != nil {
+			return err
+		}
+		if !info.Mode().IsRegular() {
+			return fmt.Errorf("%q must be a regular file", path)
+		}
+		file, err = os.Open(path)
+		return err
+	})
+	return file, err
+}
+
 func retrySharing(run func() error) error {
 	for i := 0; ; i++ {
 		err := run()

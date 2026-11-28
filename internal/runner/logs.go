@@ -33,14 +33,7 @@ func openRead(root, rel string) (*os.File, error) {
 	if err != nil {
 		return nil, err
 	}
-	info, err := os.Stat(path)
-	if err != nil {
-		return nil, err
-	}
-	if !info.Mode().IsRegular() {
-		return nil, fmt.Errorf("%q must be a regular file", path)
-	}
-	return os.Open(path)
+	return fsx.OpenRegular(path)
 }
 
 func readText(root, rel string) ([]byte, error) {

@@ -192,7 +192,7 @@ reifu/
 * **アトミック書き込み (`fsx.WriteFileAtomic`)**:
   * 同一ディレクトリ内に `os.CreateTemp`（暗号論的または十分なランダム性を持つ一時ファイル `.reifu.tmp.<pid>.*`、作成パーミッション `0600`）を作成し、改行コードを LF（`\n`）へ正規化した UTF-8 バイト列を書き込み、`Sync()` 後に `Close()` して `os.Rename` で目的パスへ置換する。エラー発生時は `defer` で一時ファイルを確実に `os.Remove` する。
   * 既存ファイルがある場合はそのパーミッション（`0644` 等）へ `Chmod` してから置換する（新規ファイルは `0644`）。
-* **Windows 共有違反リトライ**: Windows 環境でウイルス対策ソフトやエディタ（VS Code / Zed）が一時的にファイルハンドルを保持している場合を考慮し、`os.Rename` および `os.Link` が `ERROR_ACCESS_DENIED` / `ERROR_SHARING_VIOLATION` を返した場合は、初回 20ms から最大 5 回（20ms, 40ms, 80ms, 160ms, 320ms）の指数バックオフリトライを行う。
+* **Windows 共有違反リトライ**: Windows 環境でウイルス対策ソフトやエディタ（VS Code / Zed）が一時的にファイルハンドルを保持している場合を考慮し、`os.Rename` および `os.Link` が `ERROR_ACCESS_DENIED` / `ERROR_SHARING_VIOLATION` を返した場合は、初回 20ms から最大 5 回（20ms, 40ms, 80ms, 160ms, 320ms）の指数バックオフリトライを行う。ランナーの状態ファイル・ログの読み取り（`fsx.OpenRegular`）も、置換中の一時的な共有違反に対して同じリトライを行う。
 * **プロセス間排他ロック (`fsx.WithFileLock`)**: 複数エージェントの同時実行による書き込み競合を防ぐため、`init` / `sync` / `link` 実行時はプロジェクトルートの `.reifu.lock` を `O_CREATE|O_EXCL` で取得し、自身の PID と UTC タイムスタンプを書き込む（タイムアウト 5 秒）。5 秒以上経過した古いロックファイルは異常終了の残骸とみなして回収するが、他プロセスとの TOCTOU 競合を避けるため回収直後に再度 `O_CREATE|O_EXCL` で排他取得を試行するループとする。`.reifu.lock` と `.reifu.tmp.*` は `.gitignore` に自動登録する。
 * **I/O ストリーム分離**: `--json` フラグ指定時、標準出力（`stdout`）には単一の JSON 値を出力する。`sync` とセットアップの警告はレポートの `warnings` に格納し、その他の診断テキストは標準エラー出力（`stderr`）へ送る。
 
@@ -245,4 +245,4 @@ reifu/
 
 `--cancel-on-stdin-eof` を有効にする親プロセスは、実行開始時に stdin のパイプを開いたままにする。親が書き込み側を閉じると、ランのコンテキストがキャンセルされ、子プロセスツリーを停止してチェックポイントを保存する。開始前に stdin が閉じていれば即キャンセルされ `run_failed` が出る。このフラグは dry-run では無効。ラン完了後、stdin の読み取り goroutine は `Read` が戻るか CLI プロセスが終了するまで残る。キャンセルとタイムアウトはともに `failed` で、`error` はそれぞれ `context canceled` / `context deadline exceeded` を含む。
 
-Windows の race テストで `TestFollowLog` が一度失敗した（再実行 8 回では再現せず）。状態ファイルのアトミック置換と読み取りが競合した際の一時的な共有違反やアクセス拒否が候補で、原因は未確定。最新ランの読み取りでも失敗した呼び出しでは `runner.latest_run` が省略されうる。
+Windows では、状態ファイル（`.reifu.run.json` / `run.json`）のアトミック置換中に読み取ると、一時的な共有違反（`ERROR_SHARING_VIOLATION`）やアクセス拒否が起こる（Phase 6 の race テストで `TestFollowLog` が一度失敗した原因の候補）。ランナーの読み取りは `fsx.OpenRegular` を通し、書き込み側と同じ指数バックオフ（最大 5 回）で再試行する。実行中のランを `status --json` や `logs -f` で読んでも、`runner.latest_run` が一時的に抜けにくい。再試行を使い切った場合だけ、ベストエフォートとして `latest_run` を省略する。

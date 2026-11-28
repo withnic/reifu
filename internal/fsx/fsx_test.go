@@ -361,3 +361,46 @@ func TestNamedFileLock(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestOpenRegular(t *testing.T) {
+	root := t.TempDir()
+	if _, err := OpenRegular(filepath.Join(root, "missing.json")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("missing file error = %v", err)
+	}
+	if file, err := OpenRegular(root); err == nil {
+		_ = file.Close()
+		t.Fatal("opened a directory")
+	}
+
+	// Readers must not see transient errors while a writer atomically replaces the file.
+	if err := WriteFileAtomic(root, "state.json", []byte("0\n")); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() {
+		for i := range 200 {
+			if err := WriteFileAtomic(root, "state.json", fmt.Appendf(nil, "%d\n", i)); err != nil {
+				done <- err
+				return
+			}
+		}
+		done <- nil
+	}()
+	for {
+		select {
+		case err := <-done:
+			if err != nil {
+				t.Fatal(err)
+			}
+			return
+		default:
+		}
+		file, err := OpenRegular(filepath.Join(root, "state.json"))
+		if err != nil {
+			t.Fatalf("read during atomic replace: %v", err)
+		}
+		if err := file.Close(); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
