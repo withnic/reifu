@@ -120,3 +120,37 @@ func TestStateAndExitCodes(t *testing.T) {
 		t.Fatalf("status report marshal: %s (%v)", raw, err)
 	}
 }
+
+func TestRunnerConfigAndRunID(t *testing.T) {
+	cfg := ReifuConfig{Version: 1, Project: ProjectMeta{Preset: "go-cli"}}
+	data, err := json.Marshal(cfg)
+	if err != nil || strings.Contains(string(data), `"runner"`) || cfg.Validate() != nil {
+		t.Fatalf("legacy config: %s (%v)", data, err)
+	}
+	cfg.Runner = RunnerConfig{Implementer: "test-1", Reviewer: "Codex", Agents: map[string][]string{"test-1": {"test", ""}}}
+	data, err = json.Marshal(cfg)
+	var decoded ReifuConfig
+	if err != nil || json.Unmarshal(data, &decoded) != nil || decoded.Runner.Implementer != "test-1" || decoded.Validate() != nil {
+		t.Fatalf("runner config: %s (%v)", data, err)
+	}
+	for _, bad := range []RunnerConfig{
+		{Implementer: "../bad"}, {Reviewer: "-bad"}, {Agents: map[string][]string{"bad/name": {"x"}}},
+		{Agents: map[string][]string{"empty": {}}}, {Agents: map[string][]string{"blank": {"  "}}},
+		{Agents: map[string][]string{"control": {"x", "a\rb", "\x00"}}}, {Agents: map[string][]string{"line": {"x", "\n"}}},
+	} {
+		cfg.Runner = bad
+		if err := cfg.Validate(); err == nil {
+			t.Errorf("accepted %#v", bad)
+		}
+	}
+	for _, id := range []string{"", "../runs", "..\\runs", "/tmp", "C:run", "a\n", strings.Repeat("a", 65)} {
+		if err := ValidateRunID(id); err == nil {
+			t.Errorf("accepted run ID %q", id)
+		}
+	}
+	for _, id := range []string{"20261128T120000Z", "A_-0", strings.Repeat("a", 64)} {
+		if err := ValidateRunID(id); err != nil {
+			t.Error(err)
+		}
+	}
+}

@@ -1,6 +1,7 @@
 package model
 
 import (
+	"encoding/json"
 	"fmt"
 	"regexp"
 	"strings"
@@ -45,6 +46,7 @@ const (
 )
 
 type ReifuConfig struct {
+	Runner      RunnerConfig     `json:"runner,omitempty"`
 	Version     SchemaVersion    `json:"version"`
 	Project     ProjectMeta      `json:"project"`
 	Agents      AgentsConfig     `json:"agents"`
@@ -54,6 +56,20 @@ type ReifuConfig struct {
 	Hooks       HooksModel       `json:"hooks"`
 	Workflow    WorkflowModel    `json:"workflow,omitempty"`
 }
+
+// MarshalJSON keeps the optional runner section absent for existing configs.
+func (c ReifuConfig) MarshalJSON() ([]byte, error) {
+	type config ReifuConfig
+	var runner *RunnerConfig
+	if c.Runner.Implementer != "" || c.Runner.Reviewer != "" || len(c.Runner.Agents) != 0 {
+		runner = &c.Runner
+	}
+	return json.Marshal(struct {
+		config
+		Runner *RunnerConfig `json:"runner,omitempty"`
+	}{config: config(c), Runner: runner})
+}
+
 type ProjectMeta struct {
 	Name   string `json:"name"`
 	Preset string `json:"preset"`
@@ -124,6 +140,9 @@ func (c *ReifuConfig) ApplyDefaults() {
 // Validate checks the configuration without modifying it.
 func (c ReifuConfig) Validate() error {
 	c.ApplyDefaults()
+	if err := c.Runner.Validate(); err != nil {
+		return err
+	}
 	if c.Version != CurrentSchemaVersion {
 		return invalid("version", fmt.Errorf("unsupported schema version %d", c.Version))
 	}

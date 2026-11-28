@@ -63,6 +63,7 @@ reifu/
 │   │   └── version_cmd.go
 │   ├── runner/
 │   │   ├── runner.go                   # フェーズ実行→レビュー→コミット自動ループ・中断再開・レポート生成
+│   │   ├── steps.go                    # 実装・レビュー各ステップ、子プロセス起動・ストリーミング・ハートビート
 │   │   ├── agents.go                   # claude / codex / gemini / agy 起動コマンド解決
 │   │   ├── git.go                      # ローカル git status / add(除外pathspec付き) / commit / diff --stat
 │   │   ├── logs.go                     # `reifu logs` 用読み取り専用ログ・レビュー・追従リーダー
@@ -70,6 +71,7 @@ reifu/
 │   ├── model/
 │   │   ├── config.go
 │   │   ├── state.go
+│   │   ├── run_state.go                # RunnerConfig / RunState / PhaseRunRecord / ValidateRunID
 │   │   ├── errors.go
 │   │   └── model_test.go
 │   ├── jsonc/
@@ -117,6 +119,8 @@ reifu/
 │   │   ├── detect.go
 │   │   ├── detect_windows.go
 │   │   ├── detect_unix.go
+│   │   ├── process_windows.go          # 子プロセスツリー終了（taskkill /T /F）
+│   │   ├── process_unix.go             # 子プロセスツリー終了（プロセスグループ SIGKILL）
 │   │   └── detect_test.go
 │   └── fsx/
 │       ├── pathguard.go                # プロジェクトルート境界・シンボリックリンク脱出検証
@@ -188,6 +192,14 @@ reifu/
 * 生成対象の Markdown や JSON/TOML テンプレート内には `{{ ... }}`（GitHub Actions や Go template のサンプルコード）が含まれるため、`text/template` のデリミタを **`[[` と `]]`** に変更してパースする（例: `[[ .ProjectName ]]`、`[[ .Year ]]`）。
 * テンプレートへ渡すコンテキストはファイル操作や環境参照などのメソッドを持たないプレーンなデータ構造体（`TemplateData`）のみに限定する。
 * **`AGENTS.md.tmpl` の標準コマンド一覧**: `Makefile` 等の外部タスクランナーに依存せず人間と AI が共通手順を参照できるよう、`AGENTS.md.tmpl` にはプリセット別（`go-cli` / `ts-web` / `minimal`）の **セットアップ（インストール）→ 実行 → Lint/フォーマット → テスト → ビルド** コマンド一覧を言語標準コマンドで必ず展開し、各プリセットの `.reifu.jsonc`（`allow_commands` / `verify_command`）と整合させる。
+
+## **4.6 `reifu run` の子プロセス・ロック・再開の制約**
+
+* **ロック**: `reifu run` は `.reifu/run.lock`（`fsx.WithNamedFileLock`）を使い、`.reifu.lock` とは独立させる。子エージェント内の `reifu sync` / `reifu hook verify` は `.reifu.lock` を取るので競合しない。ラン実行中のロックは OS ロックで生存判定されるため、5 秒を過ぎても他プロセスに回収されない。
+* **子プロセスツリーの終了**: タイムアウトや Ctrl+C では、直下の子だけでなくプロセスツリー全体を止める（`sysenv.KillTreeOnCancel`）。Windows では `claude` / `codex` / `gemini` が `.cmd` シム（`cmd.exe` → `node`）であることが多く、直下の子だけを止めると本体が作業ツリーの編集を続けてしまう。Windows は `taskkill /T /F`、Linux / macOS はプロセスグループ（`Setpgid`）への `SIGKILL` で止める。
+* **エージェントのパス解決**: `runner.agents` の先頭要素は、名前だけなら `PATH` から探す。相対パス（`./scripts/agent` 等）は、エージェントの作業ディレクトリと同じプロジェクトルートを基準に解決する。
+* **再開時の作業ツリー**: `--resume` でも未コミット変更の検査は省かない。失敗したステップが残した変更をそのままコミットしないよう、確認した上で `--allow-dirty` を付けて再開する。再開時の `no_review` / `no_commit` は `.reifu.run.json` に記録した値を使う。
+* **コミット済みチェックポイント**: コミット直前に `commit_base`（その時点の HEAD）を保存する。コミット後・状態保存前に中断された場合、再開時に HEAD の親とコミット件名が一致すればそのコミットを再利用し、二重コミットしない。
 
 # **5\. エージェントディレクトリ存在判定ポリシー**
 

@@ -194,20 +194,20 @@ reifu run [options] [dir]
 ## 4. 受け入れ基準チェックリスト
 
 ### モデル・設定・テンプレート
-- [ ] `internal/model` に `RunnerConfig`（`implementer` / `reviewer` / `agents`）とバリデーションが追加され、既存 `.reifu.jsonc` と 100% 後方互換である
+- [x] `internal/model` に `RunnerConfig`（`implementer` / `reviewer` / `agents`）とバリデーションが追加され、既存 `.reifu.jsonc` と 100% 後方互換である
 - [ ] `internal/template/embedded/common/gitignore.tmpl` と本リポジトリ `.gitignore` に `.reifu/` と `.reifu.run.json` が含まれている
 - [ ] `internal/template/embedded/prompts/README.md.tmpl` と `HOWTO.md` / `README.md` に `reifu run` の使い方が反映されている
 
 ### オーケストレーター実装（`internal/runner`）
-- [ ] `claude` / `codex` / `gemini` / `agy`（エイリアス `antigravity`）の 4 エージェントが内蔵デフォルトで解決・起動できる
-- [ ] `.reifu.jsonc` の `runner.agents` によるデフォルト上書きとカスタムランナー定義が動作し、カスタムコマンド使用時は `stderr` へ警告が出る
-- [ ] `prompts/phases/*.md` を辞書順で検出し、各フェーズについて `implement` → `git commit` → `review` → `git commit` を順次実行できる
-- [ ] レビュー実行時、`prompts/review.md` の内容に対象フェーズ名・実装コミット情報がコンテキストとして付与される
-- [ ] `.reifu/runs/<run-id>/` 配下に `<stem>_implement.log`・`<stem>_review.md`・`summary.md` が UTF-8 / LF で生成され、人間が後からレビュー内容を確認できる
-- [ ] `.reifu.run.json` に進捗がアトミック保存され、`--resume` で中断したフェーズまたはレビューステップから再開できる
-- [ ] `BLOCKED_REPORT.md` 検出・非ゼロ終了・タイムアウト時に安全停止（Exit `2`）し、状態を保存する
-- [ ] `git add` 時に `.reifu/`・`.reifu.run.json`・`.reifu.state.json`・`.reifu.lock`・`BLOCKED_REPORT.md` が絶対に誤コミットされない
-- [ ] `.reifu/run.lock` による多重起動防止が機能し、かつ `.reifu.lock` と競合しない
+- [x] `claude` / `codex` / `gemini` / `agy`（エイリアス `antigravity`）の 4 エージェントが内蔵デフォルトで解決・起動できる
+- [x] `.reifu.jsonc` の `runner.agents` によるデフォルト上書きとカスタムランナー定義が動作し、カスタムコマンド使用時は `stderr` へ警告が出る
+- [x] `prompts/phases/*.md` を辞書順で検出し、各フェーズについて `implement` → `git commit` → `review` → `git commit` を順次実行できる
+- [x] レビュー実行時、`prompts/review.md` の内容に対象フェーズ名・実装コミット情報がコンテキストとして付与される
+- [x] `.reifu/runs/<run-id>/` 配下に `<stem>_implement.log`・`<stem>_review.md`・`summary.md` が UTF-8 / LF で生成され、人間が後からレビュー内容を確認できる
+- [x] `.reifu.run.json` に進捗がアトミック保存され、`--resume` で中断したフェーズまたはレビューステップから再開できる
+- [x] `BLOCKED_REPORT.md` 検出・非ゼロ終了・タイムアウト時に安全停止（Exit `2`）し、状態を保存する
+- [x] `git add` 時に `.reifu/`・`.reifu.run.json`・`.reifu.state.json`・`.reifu.lock`・`BLOCKED_REPORT.md` が絶対に誤コミットされない
+- [x] `.reifu/run.lock` による多重起動防止が機能し、かつ `.reifu.lock` と競合しない
 
 ### CLI・セキュリティ・テスト
 - [ ] `reifu run` の全フラグ（`--implementer`, `--reviewer`, `--phase`, `--from`, `--no-review`, `--no-commit`, `--allow-dirty`, `--resume`, `--timeout`, `--dry-run`, `--json`）と進捗表示（バナー・リアルタイムストリーミング・30 秒ハートビート）が正しく動作する

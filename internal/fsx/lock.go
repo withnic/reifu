@@ -20,7 +20,17 @@ func WithFileLock(root string, run func() error) error {
 }
 
 func withFileLock(root string, timeout time.Duration, run func() error) error {
-	path, err := withinRoot(root, ".reifu.lock")
+	return withNamedFileLock(root, ".reifu.lock", timeout, run)
+}
+
+// WithNamedFileLock serializes writers using a project-relative lock path.
+// The parent directory must already exist.
+func WithNamedFileLock(root, target string, run func() error) error {
+	return withNamedFileLock(root, target, lockTimeout, run)
+}
+
+func withNamedFileLock(root, target string, timeout time.Duration, run func() error) error {
+	path, err := withinRoot(root, target)
 	if err != nil {
 		return err
 	}

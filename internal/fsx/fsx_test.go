@@ -331,3 +331,33 @@ func makeDirectoryLink(t *testing.T, target, link string) {
 		t.Fatalf("create junction: %v (%s)", err, output)
 	}
 }
+
+func TestNamedFileLock(t *testing.T) {
+	root := t.TempDir()
+	const named = ".reifu/run.lock"
+	if err := EnsureDirWithinRoot(root, ".reifu"); err != nil {
+		t.Fatal(err)
+	}
+	err := WithNamedFileLock(root, named, func() error {
+		expired := time.Now().Add(-2 * lockTimeout)
+		if err := os.Chtimes(filepath.Join(root, filepath.FromSlash(named)), expired, expired); err != nil {
+			return err
+		}
+		return WithFileLock(root, func() error {
+			err := withNamedFileLock(root, named, 80*time.Millisecond, func() error {
+				t.Error("reclaimed live named lock with stale metadata")
+				return nil
+			})
+			if !errors.Is(err, ErrLockTimeout) {
+				return fmt.Errorf("expected named lock timeout: %v", err)
+			}
+			return nil
+		})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := WithNamedFileLock(root, named, func() error { return nil }); err != nil {
+		t.Fatal(err)
+	}
+}
