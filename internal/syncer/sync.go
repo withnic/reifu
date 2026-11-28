@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"path"
 	"path/filepath"
@@ -37,10 +38,12 @@ type Options struct {
 }
 
 type Result struct {
-	StateMissing bool
-	Targets      map[model.AgentName]model.TargetReport
-	ChangedPaths []string
-	Warnings     []string
+	StateMissing   bool
+	Targets        map[model.AgentName]model.TargetReport
+	Skills         []model.LinkReport
+	HasSkillIssues bool
+	ChangedPaths   []string
+	Warnings       []string
 }
 
 type projectSnapshot struct {
@@ -51,9 +54,15 @@ type projectSnapshot struct {
 	result Result
 }
 
-// Inspect reports target drift without acquiring a lock or writing files.
+// Inspect reports target drift and skill integrity without writing files.
 func Inspect(root string) (Result, error) {
 	snapshot, err := readProject(root, false, nil)
+	if err != nil {
+		return snapshot.result, err
+	}
+	plan, err := planSkills(root, snapshot.config, snapshot.state, Options{}, true, false)
+	snapshot.result.Skills = plan.reports
+	snapshot.result.HasSkillIssues = plan.issues
 	return snapshot.result, err
 }
 
@@ -83,19 +92,22 @@ func sync(root string, options Options, proposed []byte) (result Result, err err
 			return err
 		}
 		result = snapshot.result
-		master, targets, state, err := snapshot.plan(options, &result)
-		if options.Warnings != nil {
-			for _, warning := range result.Warnings {
-				if _, wErr := fmt.Fprintln(options.Warnings, warning); wErr != nil {
-					return fmt.Errorf("write sync warning: %w", wErr)
-				}
-			}
+		skills, err := planSkills(root, snapshot.config, snapshot.state, options, false, true)
+		if err != nil {
+			return err
+		}
+		master, targets, state, err := snapshot.plan(options, skills, &result)
+		if wErr := writeWarnings(options.Warnings, result.Warnings); wErr != nil {
+			return wErr
 		}
 		if err != nil {
 			return err
 		}
 		if options.DryRun || state == nil {
 			return nil
+		}
+		if err := skills.apply(root, snapshot.config, options.Force); err != nil {
+			return err
 		}
 		// Write the master before distributing any imported rules. Publish the
 		// snapshot last so incomplete writes remain detectable on retry.
@@ -141,18 +153,9 @@ func readProject(root string, create bool, proposed []byte) (projectSnapshot, er
 	if err := snapshot.config.Validate(); err != nil {
 		return snapshot, fmt.Errorf("validate %s: %w", MasterPath, err)
 	}
-	state, err := readOptional(root, StatePath)
+	snapshot.state, err = readState(root)
 	if err != nil {
 		return snapshot, err
-	}
-	if state != nil {
-		snapshot.state = new(model.ReifuState)
-		if err := json.Unmarshal(bytes.TrimPrefix(state, []byte("\xef\xbb\xbf")), snapshot.state); err != nil {
-			return snapshot, fmt.Errorf("parse %s: %w", StatePath, err)
-		}
-		if snapshot.state.Version != model.CurrentSchemaVersion {
-			return snapshot, fmt.Errorf("unsupported %s version %d", StatePath, snapshot.state.Version)
-		}
 	}
 	snapshot.result = Result{StateMissing: snapshot.state == nil, Targets: make(map[model.AgentName]model.TargetReport)}
 	snapshot.files = make(map[model.AgentName][]byte)
@@ -190,6 +193,21 @@ func readProject(root string, create bool, proposed []byte) (projectSnapshot, er
 	return snapshot, nil
 }
 
+func readState(root string) (*model.ReifuState, error) {
+	data, err := readOptional(root, StatePath)
+	if err != nil || data == nil {
+		return nil, err
+	}
+	var state model.ReifuState
+	if err := json.Unmarshal(bytes.TrimPrefix(data, []byte("\xef\xbb\xbf")), &state); err != nil {
+		return nil, fmt.Errorf("parse %s: %w", StatePath, err)
+	}
+	if state.Version != model.CurrentSchemaVersion {
+		return nil, fmt.Errorf("unsupported %s version %d", StatePath, state.Version)
+	}
+	return &state, nil
+}
+
 func readOptional(root, target string) ([]byte, error) {
 	if err := fsx.ValidateWithinRoot(root, target); err != nil {
 		return nil, err
@@ -212,7 +230,7 @@ func readOptional(root, target string) ([]byte, error) {
 	return data, nil
 }
 
-func (s projectSnapshot) plan(options Options, result *Result) ([]byte, map[model.AgentName][]byte, []byte, error) {
+func (s projectSnapshot) plan(options Options, skills skillPlan, result *Result) ([]byte, map[model.AgentName][]byte, []byte, error) {
 	var sources []importSource
 	var divergent []string
 	for _, agent := range s.config.Agents.Targets {
@@ -254,6 +272,7 @@ func (s projectSnapshot) plan(options Options, result *Result) ([]byte, map[mode
 		MasterSHA256:    SHA256(master),
 		ManagedCommands: slices.Clone(cfg.Permissions.AllowCommands),
 		Targets:         make(map[model.AgentName]model.TargetState),
+		ManagedSkills:   skills.managed,
 	}
 	targets := make(map[model.AgentName][]byte)
 	for _, agent := range cfg.Agents.Targets {
@@ -323,20 +342,30 @@ func (s projectSnapshot) plan(options Options, result *Result) ([]byte, map[mode
 			result.ChangedPaths = append(result.ChangedPaths, report.Path)
 		}
 	}
+	skills.describe(result)
 	if s.state != nil && len(result.ChangedPaths) == 0 &&
-		next.MasterSHA256 == s.state.MasterSHA256 && reflect.DeepEqual(next.Targets, s.state.Targets) {
+		next.MasterSHA256 == s.state.MasterSHA256 && reflect.DeepEqual(next.Targets, s.state.Targets) &&
+		maps.EqualFunc(next.ManagedSkills, s.state.ManagedSkills, slices.Equal[[]string]) {
 		return master, targets, nil, nil
 	}
 	next.LastSyncedAt = time.Now().UTC()
+	state, err := encodeState(next)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	result.ChangedPaths = append(result.ChangedPaths, StatePath)
+	return master, targets, state, nil
+}
+
+func encodeState(state model.ReifuState) ([]byte, error) {
 	var stateBuf bytes.Buffer
 	enc := json.NewEncoder(&stateBuf)
 	enc.SetEscapeHTML(false)
 	enc.SetIndent("", "  ")
-	if err := enc.Encode(next); err != nil {
-		return nil, nil, nil, fmt.Errorf("encode %s: %w", StatePath, err)
+	if err := enc.Encode(state); err != nil {
+		return nil, fmt.Errorf("encode %s: %w", StatePath, err)
 	}
-	result.ChangedPaths = append(result.ChangedPaths, StatePath)
-	return master, targets, stateBuf.Bytes(), nil
+	return stateBuf.Bytes(), nil
 }
 
 func captureAllowRules(agent model.AgentName, target string, data []byte, state *model.TargetState) error {

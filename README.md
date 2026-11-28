@@ -9,6 +9,7 @@
 > 複数 AI コーディングエージェント（Claude Code / Codex CLI / Gemini CLI / Antigravity）向けの、ローカル完結型ボイラープレート＆プロジェクト設定統合 CLI ツール
 
 - **Single Source of Truth（SSOT）**: 行動規範は `AGENTS.md`（`CLAUDE.md` / `GEMINI.md` へ自動リンク）、権限・サンドボックス・フック設定は `.reifu.jsonc` の 1 ファイルで一元管理。
+- **マルチエージェント Skills**: `.agents/skills/` を正本として `.claude/skills/` へスキル単位でリンク。 `reifu link` / `reifu sync` で同期し、`reifu status` で確認。
 - **薄いグローバル・自己完結型ローカル**: `~/.claude/` 等のグローバル設定を一切書き換えず（ホームディレクトリ直下での実行も無条件で拒否）、プロジェクトローカルで完結。
 - **非破壊 3-way マージ＆ドリフト検知**: 外部ツールで追記された許可ルールを検知し、危険コマンドガード付きで `reifu sync --import` による逆取り込み・横展開が可能。
 - **クロスプラットフォーム検証フック（`reifu hook verify`）**: Windows（PowerShell / cmd / Git Bash）・WSL2・macOS・Linux で同一動作し、`stop_hook_active` 無限ループ防止と未初期化スキップを内蔵。

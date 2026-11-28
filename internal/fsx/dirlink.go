@@ -95,9 +95,115 @@ func dirLinkDestination(root, target string) (string, error) {
 	return filepath.Join(resolved, filepath.Base(path)), nil
 }
 
+// ValidateSkillDestinations checks the actual entry locations without
+// following the final links, which may legitimately point into the source.
+func ValidateSkillDestinations(root, source string, targets []string) error {
+	src, err := withinRoot(root, source)
+	if err != nil {
+		return err
+	}
+	destinations := make([]string, 0, len(targets))
+	for _, target := range targets {
+		dst, err := dirLinkDestination(root, target)
+		if err != nil {
+			return err
+		}
+		destinations = append(destinations, dst)
+	}
+	return ValidateDistinctPaths([]string{src}, destinations)
+}
+
+// ValidateSkillTargetDirs checks for aliases between target containers and
+// the source after resolving the containers themselves.
+func ValidateSkillTargetDirs(root, source string, dirs []string) error {
+	src, err := withinRoot(root, source)
+	if err != nil {
+		return err
+	}
+	resolved := make([]string, 0, len(dirs))
+	for _, dir := range dirs {
+		probe, err := dirLinkDestination(root, filepath.Join(dir, ".reifu"))
+		if err != nil {
+			return err
+		}
+		resolved = append(resolved, filepath.Dir(probe))
+	}
+	return ValidateDistinctPaths([]string{src}, resolved)
+}
+
+// InspectDirEntry classifies the destination entry without following it.
+func InspectDirEntry(root, target string) (exists, linked bool, err error) {
+	dst, err := dirLinkDestination(root, target)
+	if err != nil {
+		return false, false, err
+	}
+	info, err := os.Lstat(dst)
+	if errors.Is(err, os.ErrNotExist) {
+		return false, false, nil
+	}
+	if err != nil {
+		return false, false, fmt.Errorf("inspect directory entry %q: %w", dst, err)
+	}
+	return true, isDirReparsePoint(info, dst), nil
+}
+
+// SameSkillEntry detects case-only aliases on case-insensitive filesystems.
+func SameSkillEntry(root, first, second string) (bool, error) {
+	a, err := dirLinkDestination(root, first)
+	if err != nil {
+		return false, err
+	}
+	b, err := dirLinkDestination(root, second)
+	if err != nil {
+		return false, err
+	}
+	left, err := os.Lstat(a)
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("inspect skill alias %q: %w", first, err)
+	}
+	right, err := os.Lstat(b)
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("inspect skill alias %q: %w", second, err)
+	}
+	return os.SameFile(left, right), nil
+}
+
+// ValidateSkillCopy checks whether a source can be copied without following links.
+func ValidateSkillCopy(root, source string) error {
+	src, _, err := dirLinkSource(root, source)
+	if err != nil {
+		return err
+	}
+	return walkSkillTree(root, src, func(path string, info os.FileInfo) error {
+		if isDirReparsePoint(info, path) || (!info.IsDir() && !info.Mode().IsRegular()) {
+			return fmt.Errorf("%q: %w", path, errNonRegularSkillEntry)
+		}
+		return nil
+	})
+}
+
+// ErrDirLinkDestination identifies a link whose destination cannot be safely resolved.
+var ErrDirLinkDestination = errors.New("invalid directory link destination")
+
 // CheckDirLink classifies a directory link or copy without following an
 // out-of-project target.
 func CheckDirLink(root, source, target string) (model.LinkReport, error) {
+	return inspectDirLink(root, source, target, true)
+}
+
+// CheckDirLinkForUpdate skips content comparisons when a copy cannot satisfy
+// the requested mode.
+func CheckDirLinkForUpdate(root, source, target string, mode model.LinkMode) (model.LinkReport, error) {
+	return inspectDirLink(root, source, target, mode == model.LinkModeCopy)
+}
+
+func inspectDirLink(root, source, target string, compareCopy bool) (model.LinkReport, error) {
 	report := model.LinkReport{Target: target}
 	src, srcInfo, err := dirLinkSource(root, source)
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
@@ -112,10 +218,20 @@ func CheckDirLink(root, source, target string) (model.LinkReport, error) {
 			return report, err
 		}
 	}
-	return checkDirLink(root, src, srcInfo, dst, report)
+	return checkDirLink(root, src, srcInfo, dst, report, compareCopy)
 }
 
-func checkDirLink(root, src string, srcInfo os.FileInfo, dst string, report model.LinkReport) (model.LinkReport, error) {
+// CheckRemovedSkill classifies a stale destination with no expected source.
+func CheckRemovedSkill(root, target string) (model.LinkReport, error) {
+	report := model.LinkReport{Target: target}
+	dst, err := dirLinkDestination(root, target)
+	if err != nil {
+		return report, err
+	}
+	return checkDirLink(root, "", nil, dst, report, false)
+}
+
+func checkDirLink(root, src string, srcInfo os.FileInfo, dst string, report model.LinkReport, compareCopy bool) (model.LinkReport, error) {
 	report.Status = model.LinkStatusMissing
 	entry, err := os.Lstat(dst)
 	if errors.Is(err, os.ErrNotExist) {
@@ -132,7 +248,7 @@ func checkDirLink(root, src string, srcInfo os.FileInfo, dst string, report mode
 			return report, err
 		}
 		if _, err := resolveWithin(canonical, dst, 0); err != nil {
-			return report, err
+			return report, fmt.Errorf("%w: %w", ErrDirLinkDestination, err)
 		}
 		report.Mode = model.LinkModeSymlink
 		if isJunction(dst) {
@@ -152,7 +268,7 @@ func checkDirLink(root, src string, srcInfo os.FileInfo, dst string, report mode
 		return report, nil
 	}
 
-	if srcInfo != nil && entry.IsDir() && !os.SameFile(srcInfo, entry) {
+	if compareCopy && srcInfo != nil && entry.IsDir() && !os.SameFile(srcInfo, entry) {
 		equal, err := sameDirContents(root, src, dst)
 		if err != nil {
 			return report, err
@@ -202,7 +318,7 @@ func ensureDirLink(root, source, target string, mode model.LinkMode, force bool,
 		// Compare only when the entry's kind can satisfy the requested mode.
 		linked := isDirReparsePoint(entry, dst)
 		if (linked && mode != model.LinkModeCopy) || (entry.IsDir() && !linked && mode == model.LinkModeCopy) {
-			report, err := checkDirLink(root, src, srcInfo, dst, model.LinkReport{Target: target})
+			report, err := checkDirLink(root, src, srcInfo, dst, model.LinkReport{Target: target}, mode == model.LinkModeCopy)
 			if err == nil && (report.Status == model.LinkStatusOK &&
 				(mode == model.LinkModeAuto || mode == model.LinkModeHard || mode == report.Mode) ||
 				report.Status == model.LinkStatusCopy && mode == model.LinkModeCopy) {
@@ -307,13 +423,28 @@ func publishDirLink(staged, dst string, replace bool) (err error) {
 // recursively. The default skills source and every protectedSources entry
 // (project-relative, e.g. a custom skills.source) must not overlap target.
 func RemoveDirLink(root, target string, protectedSources ...string) error {
-	dst, err := dirLinkDestination(root, target)
+	dst, err := validateDirLinkRemoval(root, target, protectedSources)
 	if err != nil {
 		return err
 	}
+	return removeDirEntry(dst)
+}
+
+// ValidateDirLinkRemoval applies the same path protection as RemoveDirLink
+// without changing the destination.
+func ValidateDirLinkRemoval(root, target string, protectedSources ...string) error {
+	_, err := validateDirLinkRemoval(root, target, protectedSources)
+	return err
+}
+
+func validateDirLinkRemoval(root, target string, protectedSources []string) (string, error) {
+	dst, err := dirLinkDestination(root, target)
+	if err != nil {
+		return "", err
+	}
 	canonical, err := canonicalRoot(root)
 	if err != nil {
-		return err
+		return "", err
 	}
 	sources := append([]string{model.ReifuConfig{}.EffectiveSkillsSource()}, protectedSources...)
 	for _, source := range sources {
@@ -324,10 +455,10 @@ func RemoveDirLink(root, target string, protectedSources ...string) error {
 			guards = append(guards, resolved)
 		}
 		if err := ValidateDistinctPaths(guards, []string{dst}); err != nil {
-			return err
+			return "", err
 		}
 	}
-	return removeDirEntry(dst)
+	return dst, nil
 }
 
 func removeDirEntry(path string) error {

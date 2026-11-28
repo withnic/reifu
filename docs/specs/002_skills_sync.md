@@ -103,11 +103,15 @@ Claude Code / Codex CLI / Gemini CLI / Antigravity の 4 エージェントは�
 ### 3.4 管理済みスキル追跡とクリーンアップ
 * `.reifu.state.json`（`model.ReifuState`）に `ManagedSkills map[string][]string \`json:"managed_skills,omitempty"\``（キー: ターゲットディレクトリ例 `".claude/skills"`、値: 管理済みスキル名一覧）を追加する。
 * 正本 `.agents/skills/` からスキル `<removed>` が削除され、`managed_skills` に含まれていた場合：
-  * `<target>/<removed>` がシンボリックリンク／ジャンクション（正本方向またはリンク切れ）であれば安全に削除する。
+  * `<target>/<removed>` がシンボリックリンク／ジャンクションであれば、リンク切れを含めリンク自体を削除する。
   * ユーザーが通常ディレクトリとして独自に作り替えた場合は `--force` なしでは削除せず警告にとどめる。
 * `.agents/skills/` に存在せず `managed_skills` にも含まれない `.claude/skills/<manual>`（手動の Claude 専用スキル）には一切触れない。
 
+削除を見送った独立ディレクトリと、現在の同期先から外れたディレクトリの管理履歴は保持する。
+
 ### 3.5 各サブコマンドの挙動
+プロジェクト外を指す宛先リンクは、`link --check` と `status` で `DIFFERENT` として報告し、残りの宛先も検査する。
+
 * **`reifu link [dir]`**:
   * `AGENTS.md` リンクに続けて、検出された全スキル（および要クリーンアップの管理済みスキル）を検査・同期する。
   * `--check` 時は全スキルリンクの状態を出力し、いずれかが不整合（`auto`/`hard`/`symlink` 時の `MISSING` / `BROKEN` / `DIFFERENT` / `COPY`、または `copy` 時の `COPY` 以外）なら Exit `3`（`ExitLinkIntegrity`）を返す。
@@ -130,10 +134,10 @@ Claude Code / Codex CLI / Gemini CLI / Antigravity の 4 エージェントは�
 - [x] `EnsureDirLink` / `CheckDirLink` がプロジェクト外シンボリックリンク脱出を拒否することがテストで検証されている
 
 ### コマンド統合・同期・ドキュメント（`internal/syncer`, `internal/app`, `cmd/reifu`）
-- [ ] `.agents/skills/` が存在しないプロジェクトでは `reifu new` / `init` / `link` / `sync` / `status` の挙動・出力が従来と変わらない（不要な空フォルダを作らない）
-- [ ] `.agents/skills/<name>/SKILL.md` があるプロジェクトで `reifu link` / `reifu sync` が `.claude/skills/<name>` へスキル単位でリンクを作成し、`reifu link --check` と `reifu status`（通常・`--json`・`--quiet`）が正しく検証できる
-- [ ] `.claude/skills/` に手動配置された Claude 専用スキルが `reifu link` / `reifu sync` で破壊・削除されない
-- [ ] `.agents/skills/` からスキルを削除した後の `reifu sync` / `reifu link` で、管理済みリンクのみが安全にクリーンアップされる
-- [ ] `git clone` 後の独立コピー状態に対して `reifu link --check` が Exit `3`、`reifu status --quiet` が Exit `2`、`reifu link --force` でリンク再構築できる
-- [ ] `README.md`、`HOWTO.md`、`docs/design/01〜03` に `.agents/skills/` 連携の説明が反映されている
-- [ ] `gofmt -s -w .`、`go vet ./...`、`go test -v ./...`、`CGO_ENABLED=0 go build ./cmd/reifu` がすべて成功する
+- [x] `.agents/skills/` が存在しないプロジェクトでは `reifu new` / `init` / `link` / `sync` / `status` の挙動・出力が従来と変わらない（不要な空フォルダを作らない）
+- [x] `.agents/skills/<name>/SKILL.md` があるプロジェクトで `reifu link` / `reifu sync` が `.claude/skills/<name>` へスキル単位でリンクを作成し、`reifu link --check` と `reifu status`（通常・`--json`・`--quiet`）が正しく検証できる
+- [x] `.claude/skills/` に手動配置された Claude 専用スキルが `reifu link` / `reifu sync` で破壊・削除されない
+- [x] `.agents/skills/` からスキルを削除した後の `reifu sync` / `reifu link` で、管理済みリンクのみが安全にクリーンアップされる
+- [x] `git clone` 後の独立コピー状態に対して `reifu link --check` が Exit `3`、`reifu status --quiet` が Exit `2`、`reifu link --force` でリンク再構築できる
+- [x] `README.md`、`HOWTO.md`、`docs/design/01〜03` に `.agents/skills/` 連携の説明が反映されている
+- [x] `gofmt -s -w .`、`go vet ./...`、`go test -v ./...`、`CGO_ENABLED=0 go build ./cmd/reifu` がすべて成功する

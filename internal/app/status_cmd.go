@@ -22,11 +22,11 @@ func (c CLI) status(args []string) error {
 	if err != nil {
 		return err
 	}
-	links, err := projectLinks(root, true)
+	cfg, err := projectConfig(root, true)
 	if err != nil {
 		return err
 	}
-	linked, err := inspectLinks(root, links)
+	linked, err := inspectLinks(root, cfg.Links)
 	if err != nil {
 		return err
 	}
@@ -34,9 +34,12 @@ func (c CLI) status(args []string) error {
 	if err != nil {
 		return err
 	}
-	report := model.StatusReport{Root: root, Env: string(env), Links: linked, Targets: state.Targets, StateMissing: state.StateMissing, HasIssues: state.StateMissing}
+	report := model.StatusReport{
+		Root: root, Env: string(env), Links: linked, Skills: state.Skills, Targets: state.Targets,
+		StateMissing: state.StateMissing, HasIssues: state.StateMissing || state.HasSkillIssues,
+	}
 	for _, link := range report.Links {
-		report.HasIssues = report.HasIssues || !linkOK(links.Mode, link)
+		report.HasIssues = report.HasIssues || !linkOK(cfg.Links.Mode, link)
 	}
 	for _, target := range report.Targets {
 		report.HasIssues = report.HasIssues || (target.Status != model.StatusSkipped && target.Status != model.StatusInSync)
@@ -69,6 +72,11 @@ func (c CLI) printStatus(report model.StatusReport) error {
 	}
 	for _, link := range report.Links {
 		if err := c.printLink(link); err != nil {
+			return err
+		}
+	}
+	for _, skill := range report.Skills {
+		if err := c.printLink(skill); err != nil {
 			return err
 		}
 	}

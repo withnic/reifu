@@ -147,6 +147,25 @@ reifu status --quiet   # 異常なし（Exit 0）を確認
 
 ---
 
+### Skills を 4 エージェントで共有する
+
+1. `.agents/skills/<name>/SKILL.md` を正本として作成します。補助スクリプトや参照資料も同じスキルディレクトリに置けます。
+2. Antigravity、Codex CLI、Gemini CLI は `.agents/skills/` から読み込みます。Claude Code 向けには `reifu sync` または `reifu link` で `.claude/skills/<name>` へのリンクを作成します。初回導入時の `reifu init` も、既存の正本があればリンクを作成します。
+3. `reifu sync --dry-run` で変更をプレビューし、`reifu status` または `reifu link --check` で反映を確認します。`.claude/` がまだない場合は `reifu sync --create` または `reifu link` を使います。
+4. `git clone` 後、`reifu link --check` で共有スキルが独立コピーになっている場合は、宛先に保存すべきローカル編集がないことを確認してから `reifu link --force` で再構築します。
+
+`.reifu.jsonc` で正本と宛先を指定できます。省略時は以下の設定が既定値で、`.claude/skills` は `agents.targets` に `claude` が含まれる場合に選ばれます。`enabled: false` または `targets: []` で同期を無効化できます。
+
+```jsonc
+"skills": {
+  "enabled": true,
+  "source": ".agents/skills",
+  "targets": [".claude/skills"]
+}
+```
+
+Claude Code 専用スキルは、共有スキルとは別の名前で `.claude/skills/<name>/SKILL.md` に手動配置できます。正本にも管理履歴にもないディレクトリはそのまま利用できます。正本から削除したスキルの管理済みリンクは同期時に削除されます。リンクを独立ディレクトリに置き換えていた場合は警告が出るので、内容を確認してから `--force` で削除してください。同じ名前で共有スキルを新規登録するときも、宛先の置き換えには `--force` が必要です。
+
 ## 3. クロスプラットフォーム検証フック（`reifu hook verify`）
 
 `go-cli` / `ts-web` / `ts-electron` / `rust-cli` プリセットでは、Claude Code の `Stop` フックおよび Gemini CLI の `AfterAgent` フックに `"reifu hook verify"` が設定されます。

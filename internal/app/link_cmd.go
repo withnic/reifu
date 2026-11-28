@@ -20,26 +20,28 @@ var protectedLinkPaths = []string{
 	".claude/settings.json", ".codex/config.toml", ".gemini/settings.json",
 }
 
-func projectLinks(root string, required bool) (model.LinksConfig, error) {
+func projectConfig(root string, required bool) (model.ReifuConfig, error) {
 	var cfg model.ReifuConfig
 	data, err := readRegular(root, syncer.MasterPath)
 	if err != nil {
-		return cfg.Links, err
+		return cfg, err
 	}
 	if data == nil {
 		if required {
-			return cfg.Links, fmt.Errorf("read %s: %w", syncer.MasterPath, os.ErrNotExist)
+			return cfg, fmt.Errorf("read %s: %w", syncer.MasterPath, os.ErrNotExist)
 		}
-		return model.LinksConfig{Mode: model.LinkModeAuto, Targets: []string{"CLAUDE.md", "GEMINI.md"}}, nil
+		cfg.ApplyDefaults()
+		cfg.Links.Targets = []string{"CLAUDE.md", "GEMINI.md"}
+		return cfg, nil
 	}
 	if err := jsonc.Unmarshal(data, &cfg); err != nil {
-		return cfg.Links, fmt.Errorf("parse %s: %w", syncer.MasterPath, err)
+		return cfg, fmt.Errorf("parse %s: %w", syncer.MasterPath, err)
 	}
 	cfg.ApplyDefaults()
 	if err := cfg.Validate(); err != nil {
-		return cfg.Links, fmt.Errorf("validate %s: %w", syncer.MasterPath, err)
+		return cfg, fmt.Errorf("validate %s: %w", syncer.MasterPath, err)
 	}
-	return cfg.Links, nil
+	return cfg, nil
 }
 
 func (c CLI) link(args []string) error {
@@ -57,13 +59,14 @@ func (c CLI) link(args []string) error {
 		}
 	}
 	run := func() error {
-		links, err := projectLinks(root, false)
+		cfg, err := projectConfig(root, false)
 		if err != nil {
 			return err
 		}
 		if *mode != "" {
-			links.Mode = model.LinkMode(*mode)
+			cfg.Links.Mode = model.LinkMode(*mode)
 		}
+		links := cfg.Links
 		switch links.Mode {
 		case model.LinkModeAuto, model.LinkModeHard, model.LinkModeSymlink, model.LinkModeCopy:
 		default:
@@ -81,7 +84,16 @@ func (c CLI) link(args []string) error {
 				}
 				failed = failed || !linkOK(links.Mode, report)
 			}
-			if failed {
+			skills, issues, err := syncer.InspectSkills(root, cfg)
+			if err != nil {
+				return err
+			}
+			for _, report := range skills {
+				if err := c.printLink(report); err != nil {
+					return err
+				}
+			}
+			if failed || issues {
 				return &model.ExitError{Code: model.ExitLinkIntegrity, Err: errors.New("link check failed")}
 			}
 			return nil
@@ -97,6 +109,9 @@ func (c CLI) link(args []string) error {
 			return err
 		}
 		if err := preflightLinks(links, reports, *force); err != nil {
+			return err
+		}
+		if _, err := syncer.SyncSkillLinks(root, cfg, syncer.Options{Force: *force, Warnings: c.Stderr}, true); err != nil {
 			return err
 		}
 		return c.createLinks(root, links, *force)

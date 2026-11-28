@@ -148,6 +148,12 @@ func (c CLI) setupProject(command string, args []string, requireNew bool) error 
 		return err
 	}
 	options := syncer.Options{Create: true, Force: *force, NoHooks: *noHooks, TargetOS: string(env), Warnings: c.Stderr}
+	syncInitial := func(options syncer.Options) (syncer.Result, error) {
+		if *noSettings {
+			return syncer.SyncSkillLinks(root, cfg, options, false)
+		}
+		return syncer.SyncInit(root, options, files[syncer.MasterPath])
+	}
 	run := func() error {
 		writes := make(map[string][]byte)
 		replace := make(map[string]bool)
@@ -182,21 +188,19 @@ func (c CLI) setupProject(command string, args []string, requireNew bool) error 
 			if err := preflightLinks(cfg.Links, reports, *force); err != nil {
 				return err
 			}
-			if !*noSettings {
-				preview := options
-				preview.DryRun = true
-				if !*dryRun {
-					preview.Warnings = nil
-				}
-				result, err := syncer.SyncInit(root, preview, files[syncer.MasterPath])
-				if err != nil {
-					return err
-				}
-				if *dryRun {
-					for _, target := range result.ChangedPaths {
-						if _, err := fmt.Fprintln(c.Stdout, "Would update", target); err != nil {
-							return err
-						}
+			preview := options
+			preview.DryRun = true
+			if !*dryRun {
+				preview.Warnings = nil
+			}
+			result, err := syncInitial(preview)
+			if err != nil {
+				return err
+			}
+			if *dryRun {
+				for _, target := range result.ChangedPaths {
+					if _, err := fmt.Fprintln(c.Stdout, "Would update", target); err != nil {
+						return err
 					}
 				}
 			}
@@ -237,10 +241,8 @@ func (c CLI) setupProject(command string, args []string, requireNew bool) error 
 		if err := c.createLinks(root, cfg.Links, *force); err != nil {
 			return err
 		}
-		if !*noSettings {
-			if _, err := syncer.SyncInit(root, options, files[syncer.MasterPath]); err != nil {
-				return err
-			}
+		if _, err := syncInitial(options); err != nil {
+			return err
 		}
 		_, err := fmt.Fprintln(c.Stdout, "Initialized", root)
 		return err

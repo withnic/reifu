@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/withnic/reifu/internal/app"
+	"github.com/withnic/reifu/internal/fsx"
 	"github.com/withnic/reifu/internal/jsonc"
 	"github.com/withnic/reifu/internal/model"
 	"github.com/withnic/reifu/internal/runner"
@@ -812,4 +813,146 @@ func TestVersionCommand(t *testing.T) {
 	contains(t, out, "-json")
 
 	s.run(1, "version", "extra")
+}
+
+func TestSkillsCLI(t *testing.T) {
+	root := t.TempDir()
+	s := cliTest{t: t, root: root, workDir: root, homeDir: t.TempDir(), presets: t.TempDir()}
+	s.run(model.ExitOK, "init", root)
+	missing(t, filepath.Join(root, ".agents/skills"))
+	missing(t, filepath.Join(root, ".claude/skills"))
+	out, _ := s.run(model.ExitOK, "status", "--json")
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(out), &fields); err != nil {
+		t.Fatal(err)
+	}
+	if _, exists := fields["skills"]; exists {
+		t.Fatalf("unexpected skills field: %s", out)
+	}
+
+	const source = ".agents/skills/deploy-check"
+	const target = ".claude/skills/deploy-check"
+	const manual = ".claude/skills/local-only/SKILL.md"
+	put := func(name, data string) {
+		t.Helper()
+		if err := os.MkdirAll(filepath.Dir(filepath.Join(root, name)), 0755); err != nil {
+			t.Fatal(err)
+		}
+		s.write(name, data)
+	}
+	put(source+"/SKILL.md", "# Deploy check\n")
+	put(source+"/scripts/check.sh", "#!/bin/sh\n")
+	put(manual, "# Claude only\n")
+	baseline := s.read(".reifu.state.json")
+	out, _ = s.run(model.ExitOK, "sync", "--dry-run")
+	contains(t, out, "Would update "+target)
+	missing(t, filepath.Join(root, target))
+	if got := s.read(".reifu.state.json"); got != baseline {
+		t.Fatalf("dry run changed state: %s", got)
+	}
+	out, _ = s.run(model.ExitOK, "sync")
+	contains(t, out, "Updated "+target)
+	if got := s.read(target + "/SKILL.md"); got != "# Deploy check\n" {
+		t.Fatal(got)
+	}
+	if got := s.read(target + "/scripts/check.sh"); got != "#!/bin/sh\n" {
+		t.Fatal(got)
+	}
+	out, _ = s.run(model.ExitOK, "status", "--json")
+	var report model.StatusReport
+	if err := json.Unmarshal([]byte(out), &report); err != nil {
+		t.Fatal(err)
+	}
+	if len(report.Skills) != 1 || report.Skills[0].Target != target || report.Skills[0].Status != model.LinkStatusOK ||
+		(report.Skills[0].Mode != model.LinkModeSymlink && report.Skills[0].Mode != model.LinkModeJunction) {
+		t.Fatalf("unexpected skill reports: %+v", report.Skills)
+	}
+	out, _ = s.run(model.ExitOK, "status")
+	contains(t, out, target+"  OK (")
+	s.run(model.ExitOK, "status", "--quiet")
+	s.run(model.ExitOK, "link", "--check")
+
+	s.remove(target)
+	put(target+"/SKILL.md", "# Deploy check\n")
+	put(target+"/scripts/check.sh", "#!/bin/sh\n")
+	out, _ = s.run(model.ExitLinkIntegrity, "link", "--check")
+	contains(t, out, target+"  COPY (copy)")
+	s.run(model.ExitDrift, "status", "--quiet")
+	s.run(model.ExitGeneral, "link")
+	if got := s.read(target + "/scripts/check.sh"); got != "#!/bin/sh\n" {
+		t.Fatal(got)
+	}
+	s.run(model.ExitOK, "link", "--force")
+	s.run(model.ExitOK, "link", "--check")
+	s.run(model.ExitOK, "status", "--quiet")
+
+	s.remove(source + "/scripts/check.sh")
+	s.remove(source + "/scripts")
+	s.remove(source + "/SKILL.md")
+	s.remove(source)
+	out, _ = s.run(model.ExitOK, "sync")
+	contains(t, out, "Updated "+target)
+	missing(t, filepath.Join(root, target))
+	if got := s.read(manual); got != "# Claude only\n" {
+		t.Fatal(got)
+	}
+}
+
+func TestInitAndLinkSkills(t *testing.T) {
+	root := t.TempDir()
+	s := cliTest{t: t, root: root, workDir: root, homeDir: t.TempDir(), presets: t.TempDir()}
+	const source = ".agents/skills/example"
+	const target = ".claude/skills/example"
+	if err := os.MkdirAll(filepath.Join(root, source), 0755); err != nil {
+		t.Fatal(err)
+	}
+	s.write(source+"/SKILL.md", "# Example\n")
+	s.run(model.ExitOK, "init", root, "--dry-run")
+	missing(t, filepath.Join(root, target))
+	s.run(model.ExitOK, "init", root)
+	if got := s.read(target + "/SKILL.md"); got != "# Example\n" {
+		t.Fatal(got)
+	}
+
+	s.remove(target)
+	s.remove(".claude/skills")
+	s.remove(".claude/settings.json")
+	s.remove(".claude")
+	s.run(model.ExitOK, "link")
+	if got := s.read(target + "/SKILL.md"); got != "# Example\n" {
+		t.Fatal(got)
+	}
+	s.remove(source + "/SKILL.md")
+	s.remove(source)
+	s.run(model.ExitOK, "link")
+	missing(t, filepath.Join(root, target))
+}
+
+func TestSkillsExternalDestination(t *testing.T) {
+	outer := t.TempDir()
+	root := filepath.Join(outer, "project")
+	s := cliTest{t: t, root: root, workDir: outer, homeDir: t.TempDir(), presets: t.TempDir()}
+	const source = ".agents/skills/example"
+	const target = ".claude/skills/example"
+	for _, dir := range []string{filepath.Join(root, source), filepath.Join(outer, "outside")} {
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	s.write(source+"/SKILL.md", "# Example\n")
+	s.write("../outside/SKILL.md", "# Outside\n")
+	s.run(model.ExitOK, "init", root)
+	s.remove(target)
+	if mode, err := fsx.EnsureDirLink(outer, "outside", "project/"+target, model.LinkModeAuto, false); err != nil || mode == model.LinkModeCopy {
+		t.Fatalf("external link fixture: %s, %v", mode, err)
+	}
+	out, _ := s.run(model.ExitLinkIntegrity, "link", root, "--check")
+	contains(t, out, target+"  DIFFERENT")
+	out, _ = s.run(model.ExitDrift, "status", root, "--quiet", "--json")
+	contains(t, out, `"status":"DIFFERENT"`)
+	s.run(model.ExitOK, "link", root, "--force")
+	s.run(model.ExitOK, "link", root, "--check")
+	if got := s.read("../outside/SKILL.md"); got != "# Outside\n" {
+		t.Fatal(got)
+	}
 }

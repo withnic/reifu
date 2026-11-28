@@ -5,7 +5,12 @@
   "project": [[ json .Config.Project ]],
   "agents": [[ json .Config.Agents ]],
   "links": [[ json .Config.Links ]],
-  "permissions": {
+[[ if or .Config.Skills.Enabled .Config.Skills.Source (ne .Config.Skills.Targets nil) ]]  "skills": {
+    "enabled": [[ json .Config.Skills.Enabled ]],
+    "source": [[ json .Config.Skills.Source ]],
+    "targets": [[ json .Config.Skills.Targets ]]
+  },
+[[ end ]]  "permissions": {
     // Add project commands here or import additions with reifu sync --import.
     "allow_commands": [[ json .Config.Permissions.AllowCommands ]],
     "deny_commands": [[ json .Config.Permissions.DenyCommands ]],

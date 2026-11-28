@@ -39,6 +39,8 @@
 1. 別環境でリポジトリを `git clone` すると、Git の仕様上 `CLAUDE.md` と `GEMINI.md` は `AGENTS.md` と切り離された独立ファイルとして展開される。
 2. `reifu link` を実行することで、`AGENTS.md` を正本として `CLAUDE.md` と `GEMINI.md` のハードリンク（または指定リンク方式）を即座に再構築する。
 
+共有スキルは `.agents/skills/<name>/SKILL.md` を正本とする。`reifu link` と `reifu sync` は Claude Code 向けにスキル単位のリンクを作成し、`reifu status` はリンク状態を報告する。
+
 # **3\. MVPスコープ定義**
 
 | 区分 | 項目 | 内容・仕様 |

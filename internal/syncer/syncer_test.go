@@ -3,12 +3,14 @@ package syncer
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
 
+	"github.com/withnic/reifu/internal/fsx"
 	"github.com/withnic/reifu/internal/jsonc"
 	"github.com/withnic/reifu/internal/model"
 )
@@ -243,5 +245,134 @@ func TestSyncBaselineAfterCloneDoesNotDuplicateHook(t *testing.T) {
 	}
 	if got := readFixture(t, root, claude); bytes.Count(got, []byte("verify-windows")) != 1 {
 		t.Fatalf("baseline sync duplicated hook: %s", got)
+	}
+}
+
+func TestSyncSkills(t *testing.T) {
+	root := t.TempDir()
+	writeFixture(t, root, MasterPath, masterFixture)
+	run := func(options Options) Result {
+		t.Helper()
+		result, err := Sync(root, options)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return result
+	}
+	absent := func(name string) {
+		t.Helper()
+		if _, err := os.Lstat(filepath.Join(root, name)); !os.IsNotExist(err) {
+			t.Fatalf("%s should be absent: %v", name, err)
+		}
+	}
+	run(Options{})
+	if got := run(Options{}); len(got.ChangedPaths) != 0 || len(got.Warnings) != 0 {
+		t.Fatalf("no skills: %+v", got)
+	}
+	absent(".agents/skills")
+	absent(".claude")
+	baseline := readFixture(t, root, StatePath)
+	const source = ".agents/skills/my-skill"
+	const dest = ".claude/skills/my-skill"
+	const manual = ".claude/skills/claude-only/SKILL.md"
+	writeFixture(t, root, source+"/SKILL.md", "# My skill\n")
+	if got := run(Options{}); len(got.ChangedPaths) != 0 {
+		t.Fatalf("missing agent directory: %+v", got)
+	}
+	if got := run(Options{Create: true, DryRun: true}); !slices.Contains(got.ChangedPaths, dest) {
+		t.Fatalf("missing skill in preview: %+v", got)
+	}
+	absent(".claude")
+	if !bytes.Equal(baseline, readFixture(t, root, StatePath)) {
+		t.Fatal("preview changed the state")
+	}
+
+	writeFixture(t, root, manual, "# Claude only\n")
+	if got := run(Options{}); !slices.Contains(got.ChangedPaths, dest) {
+		t.Fatalf("missing skill in changes: %+v", got)
+	}
+	if got := readFixture(t, root, dest+"/SKILL.md"); string(got) != "# My skill\n" {
+		t.Fatal(string(got))
+	}
+	state, err := readState(root)
+	if err != nil || !slices.Equal(state.ManagedSkills[".claude/skills"], []string{"my-skill"}) {
+		t.Fatalf("managed skills: %+v, %v", state, err)
+	}
+	if got := run(Options{}); len(got.ChangedPaths) != 0 {
+		t.Fatalf("second sync: %+v", got)
+	}
+	for _, file := range []string{source + "/SKILL.md", source, ".agents/skills"} {
+		if err := os.Remove(filepath.Join(root, file)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := run(Options{DryRun: true}); !slices.Contains(got.ChangedPaths, dest) {
+		t.Fatalf("missing cleanup in preview: %+v", got)
+	}
+	if _, err := os.Lstat(filepath.Join(root, dest)); err != nil {
+		t.Fatal(err)
+	}
+	if got := run(Options{}); !slices.Contains(got.ChangedPaths, dest) {
+		t.Fatalf("missing cleanup in changes: %+v", got)
+	}
+	absent(dest)
+	if got := readFixture(t, root, manual); string(got) != "# Claude only\n" {
+		t.Fatal(string(got))
+	}
+	state, err = readState(root)
+	if err != nil || len(state.ManagedSkills) != 0 {
+		t.Fatalf("managed skills after cleanup: %+v, %v", state, err)
+	}
+}
+
+func TestSyncSkillsDisabledAndForceCleanup(t *testing.T) {
+	root := t.TempDir()
+	const config = `{"version":1,"project":{"preset":"minimal"},"links":{"mode":"copy"},"skills":{"enabled":%s,"source":"shared"}}`
+	writeFixture(t, root, MasterPath, fmt.Sprintf(config, "false"))
+	writeFixture(t, root, "shared/example/SKILL.md", "# Skill\n")
+	run := func(options Options) Result {
+		t.Helper()
+		result, err := Sync(root, options)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return result
+	}
+	const dest = ".claude/skills/example"
+	run(Options{Create: true})
+	if _, err := os.Lstat(filepath.Join(root, dest)); !os.IsNotExist(err) {
+		t.Fatalf("disabled skills created destination: %v", err)
+	}
+	writeFixture(t, root, MasterPath, fmt.Sprintf(config, "true"))
+	run(Options{})
+	if err := os.Remove(filepath.Join(root, "shared/example/SKILL.md")); err != nil {
+		t.Fatal(err)
+	}
+	var warnings bytes.Buffer
+	run(Options{Warnings: &warnings})
+	if !strings.Contains(warnings.String(), dest) {
+		t.Fatalf("missing retained skill warning: %s", &warnings)
+	}
+	readFixture(t, root, dest+"/SKILL.md")
+	if got := run(Options{Force: true}); !slices.Contains(got.ChangedPaths, dest) {
+		t.Fatalf("missing forced cleanup: %+v", got)
+	}
+	if _, err := os.Lstat(filepath.Join(root, dest)); !os.IsNotExist(err) {
+		t.Fatalf("forced cleanup left destination: %v", err)
+	}
+}
+
+func TestSyncSkillsProtectsCustomSourceFromAliasedTargets(t *testing.T) {
+	root := t.TempDir()
+	writeFixture(t, root, MasterPath, `{"version":1,"project":{"preset":"minimal"},"skills":{"source":"shared","targets":["alias"]}}`)
+	writeFixture(t, root, "shared/example/SKILL.md", "# Skill\n")
+	if mode, err := fsx.EnsureDirLink(root, "shared", "alias", model.LinkModeAuto, false); err != nil || mode == model.LinkModeCopy {
+		t.Fatalf("alias fixture: %s, %v", mode, err)
+	}
+	if _, err := Sync(root, Options{Force: true}); err == nil {
+		t.Fatal("sync accepted a target alias of the custom source")
+	}
+	if got := readFixture(t, root, "shared/example/SKILL.md"); string(got) != "# Skill\n" {
+		t.Fatal(string(got))
 	}
 }
