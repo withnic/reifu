@@ -514,7 +514,7 @@ type ReifuConfig struct {
 
 `status --json` は既存のレポートに `runner` を追加する。`runner.pending_phases` は必須配列で、現在の `runner.phases` から最新の `.reifu.run.json` で完了済みの名前を除いた結果を返す。名前の照合は大文字小文字を区別しない。チェックポイントがなければ、または読み取れなければ `runner.phases` と同じになる。取得できない `latest_run` は省略する。ランナーの状態は `has_issues` と `status --quiet` の終了判定から独立している。設定ファイルが未作成のディレクトリでも `status --json` は `runner` と `state_missing: true` を返す。
 
-`run --skip-completed` は新しいランを作り、最新のチェックポイントから名前が一致する完了済みフェーズの `status`、`implement_commit`、`review_commit`、`implement_log`、`review_report`、`commands_log`、`duration_ms` を引き継ぐ。チェックポイントを読めない場合は stderr に警告し、全フェーズを対象とする。未完了のフェーズがなければ新しい完了状態を保存して Exit 0 を返す。dry-run では計画に完了済みフェーズを含め、保存を行わない。`--phase`、`--from`、`--resume` との併用は Exit 1 になる。
+`run --skip-completed` は新しいランを作り、最新のチェックポイントから名前が一致する完了済みフェーズの `status`、`implement_commit`、`review_commit`、`implement_log`、`review_report`、`commands_log`、`duration_ms` を引き継ぐ。チェックポイントを読めない場合は stderr に警告し、全フェーズを対象とする。未完了のフェーズがなければ新しい完了状態を保存して Exit 0 を返す。dry-run では計画に完了済みフェーズを含め、保存を行わない。`--phase`、`--from`、`--resume` との併用は Exit 1 になる。最新のチェックポイントだけを見るため、最新のランが `--phase` / `--from` で一部のフェーズだけを含む場合、それに含まれないフェーズは（それ以前のランで完了していても）未完了として扱われ、`runner.pending_phases` にも出る。完了済みの記録の `implement_log` / `review_report` / `commands_log` は、検証時に元のランのディレクトリ（`.reifu/runs/<有効な run_id>/<大文字小文字だけ異なってよいフェーズ名>_*`）を指すことだけが許される。
 
 ## `RunEvent` の NDJSON スキーマ
 
