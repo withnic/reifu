@@ -381,6 +381,25 @@ func TestPlanAndStops(t *testing.T) {
 		}
 		requireContains(t, string(report), p.ImplementCommit, "01_alpha-implement.txt", "01_alpha-review.txt")
 	})
+	t.Run("commit succeeds when runtime files are listed in .gitignore", func(t *testing.T) {
+		opts, progress := fixture(t, true)
+		put(t, opts.Root, ".gitignore", ".reifu/\n.reifu.run.json\n.reifu.state.json\n.reifu.lock\n.reifu.tmp.*\nBLOCKED_REPORT.md\n")
+		gitOK(t, opts.Root, "add", ".gitignore")
+		gitOK(t, opts.Root, "commit", "-m", "ignore runtime files")
+		put(t, opts.Root, ".reifu.state.json", "{}\n")
+		opts.Phase = "01_alpha"
+		res, err := Run(context.Background(), opts)
+		if err != nil {
+			t.Fatalf("run with .gitignore runtime entries: %v\n%s", err, progress)
+		}
+		if res.State.Summary().Status != model.PhaseCompleted || res.State.Phases[0].ImplementCommit == "" || res.State.Phases[0].ReviewCommit == "" {
+			t.Fatalf("unexpected state: %+v", res.State)
+		}
+		tracked := gitOK(t, opts.Root, "ls-files")
+		if strings.Contains(strings.ToLower(tracked), ".reifu") || strings.Contains(tracked, blockedReport) {
+			t.Fatalf("runtime files committed: %s", tracked)
+		}
+	})
 	t.Run("dirty worktree", func(t *testing.T) {
 		opts, _ := fixture(t, true)
 		opts.NoReview, opts.Phase = true, "01_alpha"

@@ -106,7 +106,7 @@ func (c CLI) listRuns(root string, asJSON bool) error {
 		return err
 	}
 	table := tabwriter.NewWriter(c.Stdout, 0, 4, 2, ' ', 0)
-	fmt.Fprintln(table, "RUN ID\tSTARTED (UTC)\tSTATUS\tPHASES")
+	fmt.Fprintln(table, "RUN ID\tSTARTED (UTC)\tSTATUS\tCOMPLETED")
 	for _, run := range runs {
 		fmt.Fprintf(table, "%s\t%s\t%s\t%d/%d\n", run.RunID, run.StartedAt.UTC().Format(time.RFC3339), run.Status, run.Completed, run.Total)
 	}
@@ -115,7 +115,14 @@ func (c CLI) listRuns(root string, asJSON bool) error {
 
 func (c CLI) printRunState(run model.RunState) error {
 	summary := run.Summary()
-	if _, err := fmt.Fprintf(c.Stdout, "Run %s: %s (%d/%d phases)\n", run.RunID, summary.Status, summary.Completed, summary.Total); err != nil {
+	header := fmt.Sprintf("Run %s: %s (%d/%d completed)", run.RunID, summary.Status, summary.Completed, summary.Total)
+	for i, phase := range run.Phases {
+		if phase.Status != model.PhaseCompleted {
+			header = fmt.Sprintf("Run %s: %s [%d/%d: %s] (%d/%d completed)", run.RunID, summary.Status, i+1, summary.Total, phase.Name, summary.Completed, summary.Total)
+			break
+		}
+	}
+	if _, err := fmt.Fprintln(c.Stdout, header); err != nil {
 		return err
 	}
 	table := tabwriter.NewWriter(c.Stdout, 0, 4, 2, ' ', 0)

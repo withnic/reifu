@@ -20,8 +20,15 @@ func sourcePaths() []string {
 }
 
 func git(ctx context.Context, root string, args ...string) (string, error) {
+	return gitWithStdin(ctx, root, nil, args...)
+}
+
+func gitWithStdin(ctx context.Context, root string, stdin []byte, args ...string) (string, error) {
 	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Dir = root
+	if stdin != nil {
+		cmd.Stdin = bytes.NewReader(stdin)
+	}
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	out, err := cmd.Output()
@@ -29,6 +36,64 @@ func git(ctx context.Context, root string, args ...string) (string, error) {
 		return "", fmt.Errorf("git %q in %q: %w %s", args, root, errors.Join(err, ctx.Err()), strings.TrimSpace(stderr.String()))
 	}
 	return strings.TrimSpace(string(out)), nil
+}
+
+// stageChanges stages unstaged modifications, deletions, and untracked files
+// outside .gitignore and runtimePaths without passing negative pathspecs to
+// `git add`, which fails when excluded paths are also matched by .gitignore.
+func stageChanges(ctx context.Context, root string) error {
+	args := append([]string{"status", "--porcelain", "-z", "--untracked-files=all"}, sourcePaths()...)
+	cmd := exec.CommandContext(ctx, "git", args...)
+	cmd.Dir = root
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
+	if err != nil {
+		return fmt.Errorf("git %q in %q: %w %s", args, root, errors.Join(err, ctx.Err()), strings.TrimSpace(stderr.String()))
+	}
+	paths := parseUnstagedPorcelainZ(out)
+	if len(paths) == 0 {
+		return nil
+	}
+	var spec bytes.Buffer
+	for _, p := range paths {
+		spec.WriteString(p)
+		spec.WriteByte(0)
+	}
+	_, err = gitWithStdin(ctx, root, spec.Bytes(), "add", "-A", "--pathspec-from-file=-", "--pathspec-file-nul")
+	return err
+}
+
+func parseUnstagedPorcelainZ(out []byte) []string {
+	var paths []string
+	for len(out) > 0 {
+		nul := bytes.IndexByte(out, 0)
+		if nul < 0 {
+			break
+		}
+		entry := out[:nul]
+		out = out[nul+1:]
+		if len(entry) < 4 {
+			continue
+		}
+		x, y := entry[0], entry[1]
+		path1 := string(entry[3:])
+		var path2 string
+		if x == 'R' || x == 'C' || y == 'R' || y == 'C' {
+			if nextNul := bytes.IndexByte(out, 0); nextNul >= 0 {
+				path2 = string(out[:nextNul])
+				out = out[nextNul+1:]
+			}
+		}
+		if y == ' ' {
+			continue
+		}
+		paths = append(paths, path1)
+		if path2 != "" {
+			paths = append(paths, path2)
+		}
+	}
+	return paths
 }
 
 func IsGitRepo(ctx context.Context, root string) (bool, error) {
@@ -117,7 +182,7 @@ func CommitAll(ctx context.Context, root, message string) (string, error) {
 	if dirty {
 		return "", fmt.Errorf("runtime files are already staged in %q; unstage them before committing", root)
 	}
-	if _, err := git(ctx, root, append([]string{"add", "-A"}, sourcePaths()...)...); err != nil {
+	if err := stageChanges(ctx, root); err != nil {
 		return "", err
 	}
 	dirty, err = hasDiff(ctx, root, "diff", "--cached", "--quiet")

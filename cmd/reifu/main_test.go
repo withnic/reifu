@@ -215,8 +215,8 @@ func TestPhaseRunAndLogsCLI(t *testing.T) {
 		args []string
 		want string
 	}{
-		{[]string{}, "completed (2/2 phases)"},
-		{[]string{"--list"}, state.RunID},
+		{[]string{}, "completed (2/2 completed)"},
+		{[]string{"--list"}, "COMPLETED"},
 		{[]string{"--review"}, "mock review 02_second"},
 		{[]string{"--run", state.RunID, "--review", "--phase", "01_first"}, "mock review 01_first"},
 		{[]string{"--phase", "01_first"}, "mock implement 01_first"},
@@ -248,7 +248,7 @@ func TestPhaseRunAndLogsCLI(t *testing.T) {
 
 	// Non-JSON run prints a final summary to stdout; logs --review explains --no-review runs.
 	out, stderr = s.run(0, "run", "--phase", "01_first", "--no-review", "--no-commit")
-	contains(t, out, "completed (1/1 phases)")
+	contains(t, out, "completed (1/1 completed)")
 	contains(t, out, "01_first")
 	contains(t, stderr, "mock implement 01_first")
 	out, stderr = s.run(0, "logs", "--review")
@@ -298,6 +298,7 @@ func TestPhaseCLIGuards(t *testing.T) {
 	_, stderr := s.run(1, "run", "--dry-run")
 	contains(t, stderr, "missing implementer")
 	out, _ := s.run(0, "run", "--dry-run", "--phase", "01_first.md", "--implementer", "agy")
+	contains(t, out, "pending [1/1: 01_first] (0/1 completed)")
 	contains(t, out, "01_first")
 	if strings.Contains(out, "02_second") {
 		t.Fatalf("dry run selected an extra phase: %s", out)
