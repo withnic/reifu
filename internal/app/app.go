@@ -35,6 +35,8 @@ Commands:
   status [dir]   Show environment, link, and sync status (--json, --quiet)
   preset         List or export presets (list, export)
   hook           Run cross-platform agent hooks (verify)
+  run [dir]      Execute and review implementation phases
+  logs [dir]     Show phase run history, logs, and reviews
   version        Show version and build commit hash (--json)
   help [cmd]     Show help for reifu or a specific command`
 
@@ -75,6 +77,10 @@ func (c CLI) run(args []string) error {
 		return c.preset(args[1:])
 	case "hook":
 		return c.hook(args[1:])
+	case "run":
+		return c.runPhases(args[1:])
+	case "logs":
+		return c.logs(args[1:])
 	default:
 		return fmt.Errorf("unknown command %q\n%s", args[0], usage)
 	}
@@ -86,7 +92,7 @@ func (c CLI) help(args []string) error {
 		return err
 	}
 	switch args[0] {
-	case "new", "init", "link", "sync", "status", "version":
+	case "new", "init", "link", "sync", "status", "version", "run", "logs":
 		return c.run([]string{args[0], "--help"})
 	case "preset", "hook":
 		if len(args) >= 2 {

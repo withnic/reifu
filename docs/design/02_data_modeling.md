@@ -374,5 +374,5 @@ type ReifuConfig struct {
 | :---- | :---- | :---- |
 | `0` | 正常終了 | すべての処理が正常完了（`status --quiet` でドリフト・未同期・リンク切れなしの場合も `0`） |
 | `1` | 一般エラー / バリデーション失敗 | 引数不正、`.reifu.jsonc` 構文エラー、バリデーション違反（パストラバーサル・危険構成等）、I/O権限エラー、対象ディレクトリ不存在 |
-| `2` | 設定ドリフト / 衝突 / 危険取り込み検知 | `sync` 時に外部変更（`DRIFTED` / `CONFLICT`）や `--import` 時の危険コマンド・矛盾を検知、または `status --quiet` で `STATE_MISSING` / ドリフト / リンク切れを検知 |
+| `2` | 設定ドリフト / 衝突 / 危険取り込み検知 | `sync` 時に外部変更（`DRIFTED` / `CONFLICT`）や `--import` 時の危険コマンド・矛盾を検知、または `status --quiet` で `STATE_MISSING` / ドリフト / リンク切れを検知、`hook verify` 失敗、`run` の安全停止（エージェント異常終了・タイムアウト・Ctrl+C 中断・`BLOCKED_REPORT.md` 検出） |
 | `3` | リンク整合性エラー | `link --check` 時に `CLAUDE.md` / `GEMINI.md` が `AGENTS.md` と異なる inode / 実体になっている場合 |

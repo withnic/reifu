@@ -50,8 +50,8 @@ func TestPresetsLoadAndRenderBuiltins(t *testing.T) {
 			if !bytes.Contains(files["AGENTS.md"], []byte("## Development commands")) {
 				t.Fatalf("AGENTS.md missing development commands:\n%s", files["AGENTS.md"])
 			}
-			for _, ignored := range []string{".claude/settings.local.json", ".gemini/settings.local.json"} {
-				if !bytes.Contains(files[".gitignore"], []byte(ignored)) {
+			for _, ignored := range []string{".claude/settings.local.json", ".gemini/settings.local.json", ".reifu/", ".reifu.run.json"} {
+				if !bytes.Contains(files[".gitignore"], []byte(ignored+"\n")) {
 					t.Errorf(".gitignore missing %s:\n%s", ignored, files[".gitignore"])
 				}
 			}

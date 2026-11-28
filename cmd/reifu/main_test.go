@@ -3,8 +3,10 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -12,6 +14,7 @@ import (
 	"github.com/withnic/reifu/internal/app"
 	"github.com/withnic/reifu/internal/jsonc"
 	"github.com/withnic/reifu/internal/model"
+	"github.com/withnic/reifu/internal/runner"
 	"github.com/withnic/reifu/internal/template"
 )
 
@@ -64,6 +67,296 @@ func missing(t *testing.T, file string) {
 	t.Helper()
 	if _, err := os.Lstat(file); !os.IsNotExist(err) {
 		t.Fatalf("%s should be absent, stat error: %v", file, err)
+	}
+}
+
+func TestPhaseAgentProcess(t *testing.T) {
+	if os.Getenv("REIFU_CLI_TEST_AGENT") != "1" {
+		return
+	}
+	prompt, err := io.ReadAll(os.Stdin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	role := os.Args[len(os.Args)-2]
+	phase := "01_first"
+	if strings.Contains(string(prompt), "02_second") {
+		phase = "02_second"
+	}
+	if err := os.WriteFile(role+"-"+phase+".txt", []byte("agent change\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	fmt.Printf("mock %s %s\n", role, phase)
+	if role == "review" && os.Getenv("REIFU_CLI_TEST_FAIL_REVIEW") == "1" {
+		os.Exit(7)
+	}
+	if os.Getenv("REIFU_CLI_TEST_SELF_COMMIT") == "1" {
+		cmd := exec.Command("git", "add", "--", role+"-"+phase+".txt")
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git add: %s: %v", out, err)
+		}
+		cmd = exec.Command("git", "commit", "-m", role+" "+phase)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git commit: %s: %v", out, err)
+		}
+	}
+	os.Exit(0)
+}
+
+func phaseCLI(t *testing.T) cliTest {
+	t.Helper()
+	t.Setenv("REIFU_CLI_TEST_AGENT", "1")
+	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
+	t.Setenv("GIT_CONFIG_GLOBAL", os.DevNull)
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	root := t.TempDir()
+	s := cliTest{t: t, root: root, workDir: root}
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := json.Marshal(model.ReifuConfig{Version: 1, Project: model.ProjectMeta{Preset: "minimal"}, Runner: model.RunnerConfig{
+		Implementer: "builder", Reviewer: "checker",
+		Agents: map[string][]string{
+			"builder": {exe, "-test.run=^TestPhaseAgentProcess$", "--", "implement", "agent"},
+			"checker": {exe, "-test.run=^TestPhaseAgentProcess$", "--", "review", "agent"},
+		},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.write(".reifu.jsonc", string(cfg)+"\n")
+	if err := os.MkdirAll(filepath.Join(root, "prompts", "phases"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	s.write("prompts/phases/02_second.md", "Implement 02_second\n")
+	s.write("prompts/phases/01_first.md", "Implement 01_first\n")
+	s.write("prompts/review.md", "Review this phase\n")
+	s.git("init", "-q")
+	s.git("config", "user.name", "Reifu Test")
+	s.git("config", "user.email", "reifu@example.invalid")
+	s.git("add", ".")
+	s.git("commit", "-qm", "initial")
+	return s
+}
+
+func (s cliTest) git(args ...string) string {
+	s.t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = s.root
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		s.t.Fatalf("git %q: %s: %v", args, out, err)
+	}
+	return strings.TrimSpace(string(out))
+}
+
+func parseCLIJSON(t *testing.T, out string, value any) {
+	t.Helper()
+	decoder := json.NewDecoder(strings.NewReader(out))
+	if err := decoder.Decode(value); err != nil {
+		t.Fatalf("invalid JSON %q: %v", out, err)
+	}
+	if err := decoder.Decode(new(any)); err != io.EOF {
+		t.Fatalf("extra output after JSON in %q: %v", out, err)
+	}
+}
+
+func TestPhaseRunAndLogsCLI(t *testing.T) {
+	s := phaseCLI(t)
+	head := s.git("rev-parse", "HEAD")
+	out, stderr := s.run(0, "run", "--dry-run", "--json")
+	var plan runner.Plan
+	parseCLIJSON(t, out, &plan)
+	if len(plan.State.Phases) != 2 || plan.State.Phases[0].Name != "01_first" ||
+		plan.Implementer.Name != "builder" || plan.Reviewer == nil || plan.Reviewer.Name != "checker" || stderr != "" {
+		t.Fatalf("unexpected plan: %+v, stderr: %q", plan, stderr)
+	}
+	if gotHead, status := s.git("rev-parse", "HEAD"), s.git("status", "--porcelain"); gotHead != head || status != "" {
+		t.Fatalf("dry run changed the Git worktree or HEAD: head %q (want %q), status %q", gotHead, head, status)
+	}
+	missing(t, filepath.Join(s.root, ".reifu"))
+	missing(t, filepath.Join(s.root, ".reifu.run.json"))
+	out, _ = s.run(0, "run", "--dry-run", "--json", "--from", "02_second", "--no-review", "--no-commit", "--timeout", "0")
+	plan = runner.Plan{}
+	parseCLIJSON(t, out, &plan)
+	if len(plan.State.Phases) != 1 || plan.State.Phases[0].Name != "02_second" || plan.Reviewer != nil || !plan.State.NoCommit {
+		t.Fatalf("unexpected selected plan: %+v", plan)
+	}
+
+	s.write("dirty.txt", "preexisting change\n")
+	_, stderr = s.run(1, "run")
+	contains(t, stderr, "uncommitted changes")
+	missing(t, filepath.Join(s.root, ".reifu.run.json"))
+	out, stderr = s.run(0, "run", "--allow-dirty", "--json", "--implementer", "builder", "--reviewer", "checker", s.root)
+	var state model.RunState
+	parseCLIJSON(t, out, &state)
+	if state.Summary().Completed != 2 {
+		t.Fatalf("unexpected state: %+v", state)
+	}
+	for _, phase := range state.Phases {
+		if phase.ImplementCommit == "" || phase.ReviewCommit == "" {
+			t.Fatalf("missing commits: %+v", phase)
+		}
+		contains(t, stderr, "mock implement "+phase.Name)
+		contains(t, stderr, "mock review "+phase.Name)
+	}
+	contains(t, stderr, "warning: executing custom agent")
+	contains(t, stderr, "[2/2]")
+	want := "feat(phase): complete 01_first\nfix(review): address review for 01_first\nfeat(phase): complete 02_second\nfix(review): address review for 02_second"
+	if got := s.git("log", "--reverse", "--format=%s", head+"..HEAD"); got != want {
+		t.Fatalf("unexpected commits: %q", got)
+	}
+	if got := s.git("log", "--all", "--format=%H", "--", ".reifu", ".reifu.run.json"); got != "" {
+		t.Fatalf("runtime files committed: %s", got)
+	}
+	checkpoint := s.read(".reifu.run.json")
+	for _, tc := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{}, "completed (2/2 phases)"},
+		{[]string{"--list"}, state.RunID},
+		{[]string{"--review"}, "mock review 02_second"},
+		{[]string{"--run", state.RunID, "--review", "--phase", "01_first"}, "mock review 01_first"},
+		{[]string{"--phase", "01_first"}, "mock implement 01_first"},
+		{[]string{"-f"}, "mock implement 02_second"},
+		{[]string{"--follow", "--phase", "01_first"}, "mock implement 01_first"},
+	} {
+		out, stderr = s.run(0, append([]string{"logs"}, tc.args...)...)
+		contains(t, out, tc.want)
+		if stderr != "" {
+			t.Fatalf("logs %v wrote stderr: %q", tc.args, stderr)
+		}
+	}
+	var summaries []model.RunSummary
+	out, _ = s.run(0, "logs", "--list", "--json")
+	parseCLIJSON(t, out, &summaries)
+	if len(summaries) != 1 || summaries[0] != state.Summary() {
+		t.Fatalf("unexpected history: %+v", summaries)
+	}
+	out, _ = s.run(0, "logs", "--json")
+	var saved model.RunState
+	parseCLIJSON(t, out, &saved)
+	if saved.RunID != state.RunID || saved.Summary() != state.Summary() {
+		t.Fatalf("unexpected logs state: %+v", saved)
+	}
+	if s.read(".reifu.run.json") != checkpoint {
+		t.Fatal("logs changed checkpoint")
+	}
+	missing(t, filepath.Join(s.root, ".reifu", "run.lock"))
+
+	// Non-JSON run prints a final summary to stdout; logs --review explains --no-review runs.
+	out, stderr = s.run(0, "run", "--phase", "01_first", "--no-review", "--no-commit")
+	contains(t, out, "completed (1/1 phases)")
+	contains(t, out, "01_first")
+	contains(t, stderr, "mock implement 01_first")
+	out, stderr = s.run(0, "logs", "--review")
+	contains(t, out, "No review reports (run was executed with --no-review).")
+	if stderr != "" {
+		t.Fatalf("logs --review wrote stderr: %q", stderr)
+	}
+}
+
+func TestPhaseResumeCLI(t *testing.T) {
+	s := phaseCLI(t)
+	t.Setenv("REIFU_CLI_TEST_FAIL_REVIEW", "1")
+	out, _ := s.run(2, "run", "--json")
+	var failed model.RunState
+	parseCLIJSON(t, out, &failed)
+	if failed.Phases[0].Status != model.PhaseFailed || failed.Phases[0].ResumeStep != "review" ||
+		failed.Phases[1].Status != model.PhasePending {
+		t.Fatalf("unexpected stopped state: %+v", failed)
+	}
+	for _, flag := range []string{"--no-review", "--no-commit"} {
+		_, stderr := s.run(1, "run", "--resume", flag)
+		contains(t, stderr, "resume cannot be combined")
+	}
+	_, stderr := s.run(1, "run", "--resume")
+	contains(t, stderr, "--resume --allow-dirty")
+	t.Setenv("REIFU_CLI_TEST_FAIL_REVIEW", "0")
+	t.Setenv("REIFU_CLI_TEST_SELF_COMMIT", "1")
+	out, _ = s.run(0, "run", "--resume", "--allow-dirty", "--json")
+	var resumed model.RunState
+	parseCLIJSON(t, out, &resumed)
+	if resumed.RunID != failed.RunID || resumed.Summary().Completed != 2 ||
+		resumed.Phases[0].ImplementCommit != failed.Phases[0].ImplementCommit ||
+		resumed.Phases[1].BaseCommit == "" || resumed.Phases[1].ReviewBase == "" ||
+		resumed.Phases[1].ImplementCommit == "" || resumed.Phases[1].ReviewCommit == "" {
+		t.Fatalf("unexpected resumed state: %+v", resumed)
+	}
+	contains(t, resumed.Phases[1].ImplementDiff, "implement-02_second.txt")
+	contains(t, s.read(resumed.Phases[1].ReviewReport), "review-02_second.txt")
+	if got := s.git("rev-list", "--count", "HEAD"); got != "5" {
+		t.Fatalf("unexpected commit count: %s", got)
+	}
+}
+
+func TestPhaseCLIGuards(t *testing.T) {
+	s := phaseCLI(t)
+	s.write(".reifu.jsonc", "{\"version\":1,\"project\":{\"preset\":\"minimal\"}}\n")
+	_, stderr := s.run(1, "run", "--dry-run")
+	contains(t, stderr, "missing implementer")
+	out, _ := s.run(0, "run", "--dry-run", "--phase", "01_first.md", "--implementer", "agy")
+	contains(t, out, "01_first")
+	if strings.Contains(out, "02_second") {
+		t.Fatalf("dry run selected an extra phase: %s", out)
+	}
+	for _, args := range [][]string{
+		{"--phase", "01_first", "--from", "02_second"},
+		{"--resume", "--phase", "01_first"},
+		{"--resume", "--from", "01_first"},
+	} {
+		_, stderr := s.run(1, append([]string{"run", "--dry-run", "--implementer", "agy"}, args...)...)
+		contains(t, stderr, "mutually exclusive")
+	}
+	_, stderr = s.run(1, "run", "--dry-run", "--implementer", "agy", "--phase", "03_missing")
+	contains(t, stderr, "unknown phase")
+	s.write("BLOCKED_REPORT.md", "blocked\n")
+	out, stderr = s.run(2, "run", "--json", "--implementer", "agy")
+	contains(t, stderr, "BLOCKED_REPORT.md")
+	if out != "" {
+		t.Fatalf("blocked run wrote stdout: %q", out)
+	}
+	missing(t, filepath.Join(s.root, ".reifu"))
+	if err := os.Remove(filepath.Join(s.root, "BLOCKED_REPORT.md")); err != nil {
+		t.Fatal(err)
+	}
+	_, stderr = s.run(1, "logs", "--run", "../escape")
+	contains(t, stderr, "invalid run ID")
+	for _, alias := range []string{"-f", "--follow"} {
+		_, stderr := s.run(1, "logs", alias, "--json")
+		contains(t, stderr, "--follow cannot be combined with --json")
+		_, stderr = s.run(1, "logs", alias, "--review")
+		contains(t, stderr, "--follow cannot be combined with --review or --list")
+	}
+	for _, args := range [][]string{{"--phase", "01_first"}, {"--phase", "99_missing"}, {"--review"}} {
+		out, stderr := s.run(1, append([]string{"logs", "--json"}, args...)...)
+		contains(t, stderr, "--json cannot be combined with --phase or --review")
+		if out != "" {
+			t.Fatalf("logs --json %v wrote stdout: %q", args, out)
+		}
+	}
+	for _, args := range [][]string{{"--run", "20261128T120000Z"}, {"--phase", "01_first"}, {"--review"}} {
+		out, stderr := s.run(1, append([]string{"logs", "--list"}, args...)...)
+		contains(t, stderr, "--list cannot be combined")
+		if out != "" {
+			t.Fatalf("logs --list %v wrote stdout: %q", args, out)
+		}
+	}
+	_, stderr = s.run(1, "logs")
+	contains(t, stderr, "no run history")
+	contains(t, stderr, "start a run with reifu run")
+	out, _ = s.run(0, "logs", "--list", "--json")
+	if out != "[]\n" {
+		t.Fatalf("unexpected empty history: %q", out)
+	}
+	s.homeDir = s.root
+	for _, name := range []string{"run", "logs"} {
+		_, stderr := s.run(1, name)
+		contains(t, stderr, "user home directory")
+		out, _ := s.run(0, "help", name)
+		contains(t, out, "Usage: reifu "+name+" [options] [dir]")
 	}
 }
 

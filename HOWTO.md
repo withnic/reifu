@@ -208,11 +208,59 @@ Go コードの変更や再ビルドなしで、JSONC ファイルを 1 個置�
 | :---- | :---- |
 | `0` | 正常終了 |
 | `1` | 引数エラー、構文・バリデーション違反、I/O エラー、ホームディレクトリ保護 |
-| `2` | 設定ドリフト／衝突検知、`--import` 危険コマンド拒否、`status --quiet` 異常、`hook verify` 失敗 |
+| `2` | 設定ドリフト／衝突検知、`--import` 危険コマンド拒否、`status --quiet` 異常、`hook verify` 失敗、`run` の安全停止（異常終了・タイムアウト・中断・`BLOCKED_REPORT.md`） |
 | `3` | `link --check` によるリンク整合性エラー |
 
 ---
 
-## 6. 将来拡張 ToDo
+## 6. フェーズの自動実行とログ閲覧（`reifu run` / `reifu logs`）
+
+| コマンド | 用途 |
+| --- | --- |
+| `reifu run [dir]` | フェーズの実装・レビューとローカルコミット |
+| `reifu logs [dir]` | 実行進捗、ログ、レビューレポートの閲覧 |
+
+プロジェクトルートの `prompts/phases/` に `01_foundation.md` のような実装プロンプトを置き、指示を `prompts/review.md` に用意します。自動実行では原則 reifu がコミットするため、フェーズプロンプトにコミット指示を書かないでください。エージェント自身がコミットした場合も、ステップ開始時のコミットを基準に差分と SHA を記録します。
+
+実装・レビュー担当は `claude`、`codex`、`gemini`、`agy`（別名 `antigravity`）から指定できます。起動する CLI を事前にインストールしてください。
+
+```sh
+reifu run --implementer codex --reviewer claude --dry-run
+reifu run --implementer codex --reviewer claude
+reifu run --implementer agy --reviewer gemini
+```
+
+担当を固定する場合は、既存の `.reifu.jsonc` のトップレベルに次の `runner` を追加します。CLI の担当指定で上書きできます。任意の `agents` は起動コマンドと引数の配列で、実行前にコマンドが標準エラーに表示されます。信頼できるプロジェクトの設定とプロンプトで実行してください。
+
+```jsonc
+"runner": {
+  "implementer": "codex",
+  "reviewer": "claude",
+  "agents": {
+    "claude": ["claude", "-p", "--model", "sonnet"]
+  }
+}
+```
+
+`--phase 01_foundation` で 1 件、`--from 01_foundation` でそのフェーズ以降を選べます。実装・レビュー各ステップの制限時間は既定で 30 分です。`--timeout 0` で無制限になります。`--no-review` でレビューを、`--no-commit` で自動コミットを省略できます。
+
+異常終了、タイムアウト、Ctrl+C、`BLOCKED_REPORT.md` 検出時は実行を停止します。状態とログを確認し、停止原因を解消して `reifu run --resume` で中断したステップから続けます。`BLOCKED_REPORT.md` がある場合は内容を確認し、解消後に取り除きます。再開時は保存済みのレビュー・コミット設定が使われます。
+
+自動コミットを行う場合は、既定で未コミット変更のある Git 作業ツリーを拒否します。変更をコミットまたは退避するか、差分を確認して取り込む場合は `--allow-dirty`（再開時は `--resume --allow-dirty`）を指定します。両コマンドはホームディレクトリ直下を拒否します。ラン状態とログは `.reifu.run.json` と `.reifu/runs/` に保管され、reifu の自動コミット対象から除外されます。
+
+```sh
+reifu logs                            # 最新ランの進捗とコミット
+reifu logs --list                     # 過去ラン一覧
+reifu logs --review                   # 最新ランの全レビューレポート
+reifu logs --run RUN_ID --review      # 指定ランのレビュー履歴
+reifu logs --phase 01_foundation      # 指定フェーズの実装ログ
+reifu logs -f                         # 実装ログを追従。Ctrl+C で終了
+```
+
+`reifu logs` は読み取り専用です。`--json` で状態や履歴一覧を取得できます。追従中はテキストが逐次出力されるため、`-f` と `--json` は併用できません。`--json` は常にラン全体の状態を出力するため、`--phase` / `--review` とも併用できません。`-f` が追従するのは実装ログで、レビュー内容はレビュー完了後に `--review` で確認します。
+
+---
+
+## 7. 将来拡張 ToDo
 
 - `reifu preset import <file>`: 他者が作成・共有したプリセット JSONC を安全検証してユーザー設定ディレクトリへ取り込む機能

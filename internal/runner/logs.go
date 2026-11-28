@@ -144,7 +144,7 @@ func LoadRun(root, runID string) (model.RunState, error) {
 		return run, err
 	}
 	if len(runs) == 0 {
-		return run, fmt.Errorf("no run history in %q: %w", root, os.ErrNotExist)
+		return run, fmt.Errorf("no run history in %q; start a run with reifu run: %w", root, os.ErrNotExist)
 	}
 	return LoadRun(root, runs[0].RunID)
 }

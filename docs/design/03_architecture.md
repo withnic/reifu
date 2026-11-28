@@ -196,7 +196,7 @@ reifu/
 ## **4.6 `reifu run` の子プロセス・ロック・再開の制約**
 
 * **ロック**: `reifu run` は `.reifu/run.lock`（`fsx.WithNamedFileLock`）を使い、`.reifu.lock` とは独立させる。子エージェント内の `reifu sync` / `reifu hook verify` は `.reifu.lock` を取るので競合しない。ラン実行中のロックは OS ロックで生存判定されるため、5 秒を過ぎても他プロセスに回収されない。
-* **子プロセスツリーの終了**: タイムアウトや Ctrl+C では、直下の子だけでなくプロセスツリー全体を止める（`sysenv.KillTreeOnCancel`）。Windows では `claude` / `codex` / `gemini` が `.cmd` シム（`cmd.exe` → `node`）であることが多く、直下の子だけを止めると本体が作業ツリーの編集を続けてしまう。Windows は `taskkill /T /F`、Linux / macOS はプロセスグループ（`Setpgid`）への `SIGKILL` で止める。
+* **子プロセスツリーの終了**: タイムアウトや Ctrl+C では、直下の子だけでなくプロセスツリー全体を止める（`sysenv.KillTreeOnCancel`）。Windows では `claude` / `codex` / `gemini` が `.cmd` シム（`cmd.exe` → `node`）であることが多く、直下の子だけを止めると本体が作業ツリーの編集を続けてしまう。Windows は `taskkill /T /F`、Linux / macOS はプロセスグループ（`Setpgid`）への `SIGKILL` で止める。制限付きアカウント（サンドボックス用ユーザー等）では、自分が起動したプロセスでも `taskkill` がアクセス拒否になることがあるため、失敗時は Toolhelp スナップショットで子孫を辿って `TerminateProcess` し、最後に直下の子を止める。PID 再利用で無関係なプロセスを止めないよう、親より前に作成されたプロセスは子孫とみなさない。
 * **エージェントのパス解決**: `runner.agents` の先頭要素は、名前だけなら `PATH` から探す。相対パス（`./scripts/agent` 等）は、エージェントの作業ディレクトリと同じプロジェクトルートを基準に解決する。
 * **再開時の作業ツリー**: `--resume` でも未コミット変更の検査は省かない。失敗したステップが残した変更をそのままコミットしないよう、確認した上で `--allow-dirty` を付けて再開する。再開時の `no_review` / `no_commit` は `.reifu.run.json` に記録した値を使う。
 * **コミット済みチェックポイント**: コミット直前に `commit_base`（その時点の HEAD）を保存する。コミット後・状態保存前に中断された場合、再開時に HEAD の親とコミット件名が一致すればそのコミットを再利用し、二重コミットしない。

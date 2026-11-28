@@ -72,6 +72,8 @@ reifu sync
 | `reifu init [dir]` | 既存の空フォルダ／Git リポジトリに `reifu` を導入 |
 | `reifu sync [dir]` | `.reifu.jsonc` を各エージェント設定へ非破壊コンパイル（`--import`, `--dry-run`, `--no-hooks` 対応） |
 | `reifu status [dir]` | 環境・リンク・同期状態を診断（`--json`, `--quiet` 対応） |
+| `reifu run [dir]` | フェーズを順番に実装・レビューし、ローカルにコミット（`--resume` 対応） |
+| `reifu logs [dir]` | 実行履歴・実装ログ・レビューレポートを閲覧（`-f` で追従） |
 | `reifu link [dir]` | `AGENTS.md` リンクの検証（`--check`）および再構築（`--force`） |
 | `reifu preset list / export` | 内蔵・カスタムプリセットの一覧表示および書き出し |
 | `reifu hook verify [dir]` | `.reifu.jsonc` の `workflow.verify_steps` をシェル非経由で検証実行 |

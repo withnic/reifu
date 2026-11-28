@@ -60,6 +60,7 @@ reifu run [options] [dir]
 
 * `--implementer` がフラグでも `.reifu.jsonc` の `runner.implementer` でも未指定かつ `--resume` でもない場合はバリデーションエラー（Exit `1`）。
 * `--phase` と `--from` の同時指定、および `--resume` と `--phase` / `--from` の同時指定はエラー（Exit `1`）。
+* `--resume` と `--no-review` / `--no-commit` の同時指定もエラー（Exit `1`）。再開時は `.reifu.run.json` に記録された `no_review` / `no_commit` を使う。
 
 #### 読み取り専用閲覧コマンド: `reifu logs [options] [dir]`
 
@@ -74,6 +75,7 @@ reifu run [options] [dir]
 | `-f` / `--follow` | bool (`false`) | 実行中の最新ログ（または `--phase` 指定ログ）を末尾追従表示する。ポーリングで差分を読み取った直後にファイルハンドルを都度閉じるため、Windows でも `reifu run` 側の書き込みを一切ブロックしない（ラン完了検知または Ctrl+C で終了） |
 | `--json` | bool (`false`) | ラン一覧（`--list` 時）または対象ランの状態・ログメタ情報を単一 JSON で `stdout` へ出力（`--follow` との同時指定はエラー） |
 
+* `--follow` は `--json` / `--review` / `--list` と、`--list` は `--run` / `--phase` / `--review` と、`--json` は `--phase` / `--review` と同時指定できない（Exit `1`。`--json` は常にラン全体の状態を出力するため、絞り込みを黙って無視しない）。`--follow` の追従対象は実装ログで、レビューレポートはレビューステップ完了時に書き出される。
 * フラグ省略時（`reifu logs [dir]`）は、最新ランのフェーズ別進捗・コミット SHA・所要時間・ログ／レビューパスの一覧サマリーを表示する。
 * ラン履歴が存在しない場合は案内メッセージを出力し Exit `1`（または `--list` 時は空一覧を出力し Exit `0`）。
 
@@ -195,8 +197,8 @@ reifu run [options] [dir]
 
 ### モデル・設定・テンプレート
 - [x] `internal/model` に `RunnerConfig`（`implementer` / `reviewer` / `agents`）とバリデーションが追加され、既存 `.reifu.jsonc` と 100% 後方互換である
-- [ ] `internal/template/embedded/common/gitignore.tmpl` と本リポジトリ `.gitignore` に `.reifu/` と `.reifu.run.json` が含まれている
-- [ ] `internal/template/embedded/prompts/README.md.tmpl` と `HOWTO.md` / `README.md` に `reifu run` の使い方が反映されている
+- [x] `internal/template/embedded/common/gitignore.tmpl` と本リポジトリ `.gitignore` に `.reifu/` と `.reifu.run.json` が含まれている
+- [x] `internal/template/embedded/prompts/README.md.tmpl` と `HOWTO.md` / `README.md` に `reifu run` の使い方が反映されている
 
 ### オーケストレーター実装（`internal/runner`）
 - [x] `claude` / `codex` / `gemini` / `agy`（エイリアス `antigravity`）の 4 エージェントが内蔵デフォルトで解決・起動できる
@@ -210,8 +212,8 @@ reifu run [options] [dir]
 - [x] `.reifu/run.lock` による多重起動防止が機能し、かつ `.reifu.lock` と競合しない
 
 ### CLI・セキュリティ・テスト
-- [ ] `reifu run` の全フラグ（`--implementer`, `--reviewer`, `--phase`, `--from`, `--no-review`, `--no-commit`, `--allow-dirty`, `--resume`, `--timeout`, `--dry-run`, `--json`）と進捗表示（バナー・リアルタイムストリーミング・30 秒ハートビート）が正しく動作する
-- [ ] 読み取り専用コマンド `reifu logs` の全フラグ（`--list`, `--run`, `--phase`, `--review`, `-f`/`--follow`, `--json`）が正しく動作し、ロック競合・誤書き込みを起こさない
-- [ ] ホームディレクトリ直下拒否・未コミット作業ツリー拒否（`--allow-dirty` なし）・シンボリックリンク脱出拒否・`--run` ID のパストラバーサル拒否・`--json` の `stdout` 非汚染がテストで検証されている
-- [ ] モックコマンド（実 AI API 非依存・クロスプラットフォーム）による `internal/runner` ユニット／結合テストと `cmd/reifu` E2E テストがすべて PASS する
-- [ ] `gofmt -s -w .`、`go vet ./...`、`go test -v ./...`、`CGO_ENABLED=0 go build ./cmd/reifu` がすべて成功する
+- [x] `reifu run` の全フラグ（`--implementer`, `--reviewer`, `--phase`, `--from`, `--no-review`, `--no-commit`, `--allow-dirty`, `--resume`, `--timeout`, `--dry-run`, `--json`）と進捗表示（バナー・リアルタイムストリーミング・30 秒ハートビート）が正しく動作する
+- [x] 読み取り専用コマンド `reifu logs` の全フラグ（`--list`, `--run`, `--phase`, `--review`, `-f`/`--follow`, `--json`）が正しく動作し、ロック競合・誤書き込みを起こさない
+- [x] ホームディレクトリ直下拒否・未コミット作業ツリー拒否（`--allow-dirty` なし）・シンボリックリンク脱出拒否・`--run` ID のパストラバーサル拒否・`--json` の `stdout` 非汚染がテストで検証されている
+- [x] モックコマンド（実 AI API 非依存・クロスプラットフォーム）による `internal/runner` ユニット／結合テストと `cmd/reifu` E2E テストがすべて PASS する
+- [x] `gofmt -s -w .`、`go vet ./...`、`go test -v ./...`、`CGO_ENABLED=0 go build ./cmd/reifu` がすべて成功する

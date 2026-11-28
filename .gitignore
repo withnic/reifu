@@ -11,6 +11,8 @@ dist/
 coverage.out
 
 # Reifu runtime / lock / temporary files
+.reifu/
+.reifu.run.json
 .reifu.state.json
 .reifu.lock
 .reifu.tmp.*
