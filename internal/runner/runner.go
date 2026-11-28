@@ -64,6 +64,9 @@ func Run(ctx context.Context, opts Options) (Result, error) {
 	if opts.Phase != "" && opts.From != "" || opts.Resume && (opts.Phase != "" || opts.From != "") {
 		return Result{}, fmt.Errorf("phase, from and resume are mutually exclusive")
 	}
+	if opts.Resume && (opts.NoReview || opts.NoCommit) {
+		return Result{}, fmt.Errorf("resume cannot be combined with --no-review or --no-commit")
+	}
 	if opts.Timeout < 0 {
 		return Result{}, fmt.Errorf("timeout must be nonnegative")
 	}
@@ -233,6 +236,9 @@ func (e *execution) prepare() error {
 		}
 	}
 	e.run.Implementer = firstSet(e.Implementer, e.run.Implementer, e.Config.Runner.Implementer)
+	if e.run.Implementer == "" {
+		return fmt.Errorf("missing implementer agent; specify --implementer or set runner.implementer in .reifu.jsonc")
+	}
 	e.run.Reviewer = firstSet(e.Reviewer, e.run.Reviewer, e.Config.Runner.Reviewer, e.run.Implementer)
 	var err error
 	e.implementer, err = ResolveAgent(e.Config, e.run.Implementer)
@@ -317,7 +323,10 @@ func (e *execution) preflight(ctx context.Context) error {
 			return err
 		}
 		if status != "" {
-			return fmt.Errorf("Git worktree has uncommitted changes; use --allow-dirty to continue")
+			if e.Resume {
+				return fmt.Errorf("Git worktree has uncommitted changes; inspect them and use --resume --allow-dirty to continue")
+			}
+			return fmt.Errorf("Git worktree has uncommitted changes; commit or stash them, or use --allow-dirty to continue")
 		}
 	}
 	return nil

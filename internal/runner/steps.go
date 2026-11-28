@@ -63,6 +63,13 @@ func (e *execution) runPhase(ctx context.Context, i int, p *model.PhaseRunRecord
 	}
 	if step == implementStep {
 		p.ImplementAgent = e.implementer.Name
+		if e.gitRepo && p.BaseCommit == "" {
+			head, err := currentHead(ctx, e.Root)
+			if err != nil {
+				return err
+			}
+			p.BaseCommit = head
+		}
 		if err := e.transition(p, model.PhaseImplementing, implementStep); err != nil {
 			return err
 		}
@@ -80,6 +87,12 @@ func (e *execution) runPhase(ctx context.Context, i int, p *model.PhaseRunRecord
 			if err != nil {
 				return err
 			}
+			if sha == "" {
+				sha, err = e.headIfAdvanced(ctx, p.BaseCommit)
+				if err != nil {
+					return err
+				}
+			}
 			p.ImplementCommit = sha
 			p.CommitBase = nil
 		}
@@ -94,6 +107,13 @@ func (e *execution) runPhase(ctx context.Context, i int, p *model.PhaseRunRecord
 	}
 	reviewStarted := time.Now()
 	if step == reviewStep {
+		if e.gitRepo && p.ReviewBase == "" {
+			head, err := currentHead(ctx, e.Root)
+			if err != nil {
+				return err
+			}
+			p.ReviewBase = head
+		}
 		if err := e.transition(p, model.PhaseReviewing, reviewStep); err != nil {
 			return err
 		}
@@ -108,6 +128,12 @@ func (e *execution) runPhase(ctx context.Context, i int, p *model.PhaseRunRecord
 		sha, err := e.commit(ctx, p, "fix(review): address review for "+p.Name)
 		if err != nil {
 			return err
+		}
+		if sha == "" {
+			sha, err = e.headIfAdvanced(ctx, p.ReviewBase)
+			if err != nil {
+				return err
+			}
 		}
 		p.ReviewCommit = sha
 		p.CommitBase = nil
@@ -152,7 +178,20 @@ func (e *execution) commit(ctx context.Context, p *model.PhaseRunRecord, message
 	return CommitAll(ctx, e.Root, message)
 }
 
-func (e *execution) stat(ctx context.Context) (string, error) {
+const emptyGitTree = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
+
+func (e *execution) headIfAdvanced(ctx context.Context, base string) (string, error) {
+	if !e.gitRepo {
+		return "", nil
+	}
+	head, err := currentHead(ctx, e.Root)
+	if err != nil || head == "" || head == base {
+		return "", err
+	}
+	return HeadShortSHA(ctx, e.Root)
+}
+
+func (e *execution) stat(ctx context.Context, base string) (string, error) {
 	if !e.gitRepo {
 		return "", nil
 	}
@@ -160,7 +199,13 @@ func (e *execution) stat(ctx context.Context) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return worktreeStat(ctx, e.Root, head)
+	if base != "" {
+		return worktreeStat(ctx, e.Root, base)
+	}
+	if head != "" {
+		return worktreeStat(ctx, e.Root, emptyGitTree)
+	}
+	return worktreeStat(ctx, e.Root, "")
 }
 func (e *execution) implement(ctx context.Context, i int, p *model.PhaseRunRecord) error {
 	prompt, err := readText(e.Root, p.File)
@@ -189,7 +234,7 @@ func (e *execution) implement(ctx context.Context, i int, p *model.PhaseRunRecor
 	if err := errors.Join(checkBlocked(e.Root), err, log.Close()); err != nil {
 		return err
 	}
-	p.ImplementDiff, err = e.stat(ctx)
+	p.ImplementDiff, err = e.stat(ctx, p.BaseCommit)
 	return err
 }
 
@@ -206,7 +251,7 @@ func (e *execution) review(ctx context.Context, i int, p *model.PhaseRunRecord) 
 	blockedErr := checkBlocked(e.Root)
 	// A step timeout does not cancel the parent context. On interruption preserve
 	// the output even if Git can no longer provide a diff.
-	stat, statErr := e.stat(ctx)
+	stat, statErr := e.stat(ctx, p.ReviewBase)
 	var report strings.Builder
 	fmt.Fprintf(&report, "%s\n## Reviewer output (%s)\n\n%s\n\n## Review diff stat\n\n%s\n",
 		metadata, e.reviewer.Name, output.String(), stat)

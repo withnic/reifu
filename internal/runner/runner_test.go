@@ -77,6 +77,10 @@ func TestHelperAgentProcess(t *testing.T) {
 		os.Exit(3)
 	}
 	put(t, ".", phase+"-"+role+".txt", role+" "+phase+"\n")
+	if os.Getenv("REIFU_HELPER_MODE") == "self-commit" {
+		gitOK(t, ".", "add", phase+"-"+role+".txt")
+		gitOK(t, ".", "commit", "-m", "agent "+role+" "+phase)
+	}
 	os.Exit(0)
 }
 
@@ -256,8 +260,19 @@ func TestResumeReview(t *testing.T) {
 	t.Setenv("REIFU_HELPER_MODE", "")
 	progress.Reset()
 	opts.Phase, opts.Resume = "", true
-	if _, err := Run(context.Background(), opts); model.ExitCodeOf(err) != model.ExitGeneral {
+	if _, err := Run(context.Background(), opts); model.ExitCodeOf(err) != model.ExitGeneral || !strings.Contains(err.Error(), "--resume --allow-dirty") {
 		t.Fatalf("dirty resume: %v", err)
+	}
+	for _, flag := range []string{"no-review", "no-commit"} {
+		bad := opts
+		if flag == "no-review" {
+			bad.NoReview = true
+		} else {
+			bad.NoCommit = true
+		}
+		if _, err := Run(context.Background(), bad); model.ExitCodeOf(err) != model.ExitGeneral || !strings.Contains(err.Error(), "resume cannot be combined") {
+			t.Fatalf("resume with %s: %v", flag, err)
+		}
 	}
 	opts.AllowDirty = true
 	opts.Config.Runner.Agents["builder"] = []string{"missing-implementer-on-review-resume"}
@@ -338,6 +353,33 @@ func TestPlanAndStops(t *testing.T) {
 		if _, err := os.Stat(filepath.Join(opts.Root, "orphan.txt")); !errors.Is(err, os.ErrNotExist) {
 			t.Fatalf("agent subprocess kept running after the timeout: %v", err)
 		}
+	})
+	t.Run("missing implementer error", func(t *testing.T) {
+		opts, _ := fixture(t, false)
+		opts.Config.Runner.Implementer = ""
+		opts.Implementer = ""
+		opts.DryRun = true
+		if _, err := Run(context.Background(), opts); model.ExitCodeOf(err) != model.ExitGeneral || !strings.Contains(err.Error(), "missing implementer agent") {
+			t.Fatalf("missing implementer: %v", err)
+		}
+	})
+	t.Run("agent self-commit preserves commit SHA and diff stat", func(t *testing.T) {
+		opts, progress := fixture(t, true)
+		opts.Phase = "01_alpha"
+		t.Setenv("REIFU_HELPER_MODE", "self-commit")
+		res, err := Run(context.Background(), opts)
+		if err != nil {
+			t.Fatalf("self-commit run: %v\n%s", err, progress)
+		}
+		p := res.State.Phases[0]
+		if p.ImplementCommit == "" || p.ReviewCommit == "" || p.ImplementCommit == p.ReviewCommit {
+			t.Fatalf("expected distinct agent commits recorded: %+v", p)
+		}
+		report, err := ReadReviews(opts.Root, *res.State, p.Name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		requireContains(t, string(report), p.ImplementCommit, "01_alpha-implement.txt", "01_alpha-review.txt")
 	})
 	t.Run("dirty worktree", func(t *testing.T) {
 		opts, _ := fixture(t, true)
@@ -467,7 +509,7 @@ func TestResumeAfterCommitBeforeCheckpoint(t *testing.T) {
 	if err != nil || sha == "" {
 		t.Fatalf("commit: %q (%v)", sha, err)
 	}
-	opts.Resume, opts.Phase = true, ""
+	opts.Resume, opts.Phase, opts.NoReview = true, "", false
 	opts.Config.Runner.Agents["builder"] = []string{"missing-implementer-after-commit"}
 	result, err := Run(ctx, opts)
 	if err != nil || result.State.Phases[0].ImplementCommit != sha || result.State.Phases[0].Status != model.PhaseCompleted {

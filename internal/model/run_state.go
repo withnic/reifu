@@ -75,6 +75,8 @@ type RunState struct {
 }
 
 type PhaseRunRecord struct {
+	BaseCommit      string      `json:"base_commit,omitempty"`
+	ReviewBase      string      `json:"review_base,omitempty"`
 	CommitBase      *string     `json:"commit_base,omitempty"`
 	ImplementAgent  string      `json:"implement_agent,omitempty"`
 	File            string      `json:"file"`

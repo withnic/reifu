@@ -48,12 +48,14 @@
 
 ---
 
-### 2.4 Phase 1 レビューからの引き継ぎ
-* `runner.Run` は `--implementer` も `runner.implementer` もないとき `unknown runner agent ""` を返す。CLI 側で先に「`--implementer` か `runner.implementer` を指定してください」というバリデーションエラー（Exit `1`）にすること（`--resume` 時は `.reifu.run.json` の値を使うので不要）。
-* `--resume` は `.reifu.run.json` に記録した `no_review` / `no_commit` を使い、CLI の `--no-review` / `--no-commit` を無視する。同時指定されたら `stderr` に警告するか、エラーにすること。
-* 失敗ステップの再開では作業ツリーが dirty なのが普通なので、Exit `1` で拒否したときの案内に「変更を確認して `--resume --allow-dirty`」を含めること（`docs/design/03_architecture.md` 4.6）。
-* Ctrl+C（親 context のキャンセル）も `failed` として保存され Exit `2` になる。`signal.NotifyContext` から渡すだけでよい。
-* 実装エージェントが自分で `git commit` した場合、`implement_commit` は空になり、レビューに渡る差分サマリーも空になる（`reifu run` は自分のコミットしか記録しない）。HOWTO に「フェーズプロンプトでエージェントにコミットさせない」旨を書くこと。
+### 2.4 Phase 1 からの引き継ぎ（補足）
+* `runner.Run` 側で以下は対応済みなので、CLI 層（`internal/app/run_cmd.go`）はこれらと矛盾させず E2E テストで検証すること:
+  * `--implementer` / `runner.implementer` 未指定時の分かりやすいエラー（Exit `1`）
+  * `--resume` と `--no-review` / `--no-commit` 併用時のエラー（Exit `1`）
+  * `--resume` 時の dirty worktree エラーにおける `--resume --allow-dirty` 案内
+  * 実装・レビュー担当が自分で `git commit` した場合の `base_commit` / `review_base` 基準の差分・SHA 記録
+* Ctrl+C（親 context のキャンセル）は `failed` として保存され Exit `2` になるため、`signal.NotifyContext` の context をそのまま `runner.Run` へ渡すこと。
+* `HOWTO.md` には「`reifu run` 実行時は原則オーケストレーターがコミットするため、フェーズプロンプトでエージェントにコミット指示を書かない（万一エージェントがコミットしても差分は記録される）」旨を記載すること。
 
 ## 3. テスト要件
 
