@@ -93,6 +93,20 @@ func TestPresetsLoadAndRenderBuiltins(t *testing.T) {
 			if err := parsed.Validate(); err != nil {
 				t.Fatalf("rendered .reifu.jsonc failed validation: %v", err)
 			}
+			if !slices.Equal(cfg.Permissions.AllowCommands, []string{"*"}) {
+				t.Fatalf("%s default allow_commands = %v, want [*]", name, cfg.Permissions.AllowCommands)
+			}
+			if len(cfg.Permissions.StrictAllowCommands) == 0 {
+				t.Fatalf("%s missing strict_allow_commands", name)
+			}
+			for _, denied := range []string{"git push *", "git reset --hard*", "git clean*", "git branch -D*", "rm -rf *", "Remove-Item*-Recurse*", "rd /s*", "rmdir /s*", "del /s*"} {
+				if !slices.Contains(cfg.Permissions.DenyCommands, denied) {
+					t.Errorf("%s missing default deny_commands entry %q", name, denied)
+				}
+			}
+			if bytes.Contains(files[".reifu.jsonc"], []byte("strict_allow_commands")) {
+				t.Fatalf("%s rendered .reifu.jsonc should not include strict_allow_commands:\n%s", name, files[".reifu.jsonc"])
+			}
 			if parsed.Project.Name != cfg.Project.Name {
 				t.Fatalf("project name mismatch: got %q, want %q", parsed.Project.Name, cfg.Project.Name)
 			}

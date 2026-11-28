@@ -414,8 +414,8 @@ type ReifuConfig struct {
 
 | サブコマンド | フラグ | 概要 |
 | :---- | :---- | :---- |
-| `reifu new <dir>` | `--name <str>` / `--preset <name>` / `--spec <file>` / `--no-docs` / `--no-settings` / `--no-hooks` / `--link-mode <mode>` / `--agents <csv>` / `--dry-run` | 新規ディレクトリ `<dir>`（必須・既存時はエラー）を作成して雛形生成・リンク作成・初期コンパイル・state 保存。`--spec` 指定時は既存仕様書を `docs/specs/000_source_spec.md` へ取り込み `prompts/phase0.md` を仕様書ベースモードで生成。 |
-| `reifu init [dir]` | `--name <str>` / `--preset <name>` / `--spec <file>` / `--no-docs` / `--no-settings` / `--no-hooks` / `--link-mode <mode>` / `--agents <csv>` / `--force` / `--dry-run` | 既存ディレクトリへの雛形生成・リンク作成・初期コンパイル・state 保存。`--agents` 指定時は `.reifu.jsonc` の `agents.targets` にも指定値のみ設定する。ホームディレクトリ直下は無条件拒否。 |
+| `reifu new <dir>` | `--name <str>` / `--preset <name>` / `--spec <file>` / `--strict` / `--no-docs` / `--no-settings` / `--no-hooks` / `--link-mode <mode>` / `--agents <csv>` / `--dry-run` | 新規ディレクトリ `<dir>`（必須・既存時はエラー）を作成して雛形生成・リンク作成・初期コンパイル・state 保存。既定は `allow_commands: ["*"]`＋強化 `deny_commands`、`--strict` 指定時はプリセットの `strict_allow_commands` を使用。`--spec` 指定時は既存仕様書を `docs/specs/000_source_spec.md` へ取り込み `prompts/phase0.md` を仕様書ベースモードで生成。 |
+| `reifu init [dir]` | `--name <str>` / `--preset <name>` / `--spec <file>` / `--strict` / `--no-docs` / `--no-settings` / `--no-hooks` / `--link-mode <mode>` / `--agents <csv>` / `--force` / `--dry-run` | 既存ディレクトリへの雛形生成・リンク作成・初期コンパイル・state 保存。`--strict` 指定時はプリセットの `strict_allow_commands` を使用。`--agents` 指定時は `.reifu.jsonc` の `agents.targets` にも指定値のみ設定する。ホームディレクトリ直下は無条件拒否。 |
 | `reifu link [dir]` | `--mode <mode>` / `--check` / `--force` | `AGENTS.md` からのリンク検証（`--check` 不一致時は Exit `3`）および再構築。 |
 | `reifu sync [dir]` | `--import` / `--force` / `--create` / `--no-hooks` / `--dry-run` | `.reifu.jsonc` から各エージェント設定への非破壊同期・逆取り込み。 |
 | `reifu status [dir]` | `--quiet` / `--json` | 環境判定・リンク状態・設定同期状態の診断出力。`--json` 時は `stdout` に単一 JSON のみ出力。 |

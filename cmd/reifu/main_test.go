@@ -799,7 +799,7 @@ func TestProjectWorkflow(t *testing.T) {
 		t.Fatalf("exported override mismatch: %v\n%s", err, got)
 	}
 	s.root = filepath.Join(tmp, "override-project")
-	s.run(0, "init", s.root, "--preset", "go-cli", "--name", `Name with "quotes"`, "--no-hooks")
+	s.run(0, "init", s.root, "--preset", "go-cli", "--strict", "--name", `Name with "quotes"`, "--no-hooks")
 	var config model.ReifuConfig
 	if err := jsonc.Unmarshal([]byte(s.read(master)), &config); err != nil {
 		t.Fatal(err)
@@ -808,6 +808,9 @@ func TestProjectWorkflow(t *testing.T) {
 		t.Fatalf("project name changed: %q", config.Project.Name)
 	}
 	contains(t, s.read(".claude/settings.json"), "Bash(go list *)")
+	if strings.Contains(s.read(".claude/settings.json"), "Bash(*)") {
+		t.Fatalf("--strict should not allow Bash(*): %s", s.read(".claude/settings.json"))
+	}
 	s.run(0, "status", "--quiet", s.root)
 }
 
@@ -839,6 +842,24 @@ func TestInitOptions(t *testing.T) {
 	}
 	p.run(0, "init", preserveRoot, "--preset", "minimal", "--no-docs", "--no-settings", "--link-mode", "copy", "--force")
 	contains(t, p.read(".gitattributes"), "* text=auto eol=lf")
+
+	// Default uses allow_commands: ["*"] + strengthened deny_commands; --strict uses curated allowlist.
+	defaultRoot := filepath.Join(tmp, "default-perms")
+	d := cliTest{t: t, root: defaultRoot, presets: filepath.Join(tmp, "presets")}
+	d.run(0, "new", defaultRoot, "--preset", "go-cli", "--link-mode", "copy", "--no-hooks")
+	contains(t, d.read(".claude/settings.json"), "Bash(*)")
+	contains(t, d.read(".claude/settings.json"), "Bash(Remove-Item*-Recurse*)")
+	contains(t, d.read(".gemini/settings.json"), "run_shell_command(*)")
+	contains(t, d.read(".gemini/settings.json"), "run_shell_command(rd /s*)")
+
+	strictRoot := filepath.Join(tmp, "strict-perms")
+	st := cliTest{t: t, root: strictRoot, presets: filepath.Join(tmp, "presets")}
+	st.run(0, "new", strictRoot, "--preset", "go-cli", "--strict", "--link-mode", "copy", "--no-hooks")
+	contains(t, st.read(".claude/settings.json"), "Bash(go test *)")
+	contains(t, st.read(".claude/settings.json"), "Bash(Remove-Item*-Recurse*)")
+	if strings.Contains(st.read(".claude/settings.json"), "Bash(*)") || strings.Contains(st.read(".gemini/settings.json"), "run_shell_command(*)") {
+		t.Fatalf("--strict leaked wildcard allow rule:\nclaude=%s\ngemini=%s", st.read(".claude/settings.json"), st.read(".gemini/settings.json"))
+	}
 	var cfg model.ReifuConfig
 	if err := jsonc.Unmarshal([]byte(s.read(".reifu.jsonc")), &cfg); err != nil {
 		t.Fatal(err)

@@ -82,6 +82,7 @@ reifu init --preset ts-web
 | `--no-docs` | `docs/` および `prompts/` の生成を省略 |
 | `--no-settings` | 各エージェント設定と `.reifu.state.json` の初期生成を省略 |
 | `--no-hooks` | 完了検証フックの出力を省略 |
+| `--strict` | 既定の「`*` 許可＋強化 `deny_commands`」の代わりに、プリセット別の厳格なコマンド許可リスト（`strict_allow_commands`）を `.reifu.jsonc` に書き出す |
 | `--dry-run` | ファイルを書き込まずに変更予定だけ表示 |
 | `--force` | 既存ファイルの上書きを許可（`init` のみ） |
 
@@ -201,8 +202,21 @@ Go コードの変更や再ビルドなしで、JSONC ファイルを 1 個置�
      "agents": { "targets": ["claude", "codex", "gemini"], "create_missing": false },
      "links": { "mode": "auto", "targets": ["CLAUDE.md", "GEMINI.md"] },
      "permissions": {
-       "allow_commands": ["cmake *", "ctest *"],
-       "deny_commands": ["git push *", "git reset --hard*", "rm -rf *"],
+       "allow_commands": ["*"],
+       "strict_allow_commands": ["cmake *", "ctest *"],
+       "deny_commands": [
+         "git push *",
+         "git push*",
+         "git reset --hard*",
+         "git clean*",
+         "git checkout -- *",
+         "git branch -D*",
+         "rm -rf *",
+         "Remove-Item*-Recurse*",
+         "rd /s*",
+         "rmdir /s*",
+         "del /s*"
+       ],
        "deny_paths": [".env", ".env.*", "**/.env", "**/.env.*"]
      },
      "sandbox": { "mode": "workspace-write", "approval_policy": "never", "network_access": false },

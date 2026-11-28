@@ -54,6 +54,7 @@ reifu help
 
 ```sh
 # 1. 新規プロジェクトを作成して Git 初期化（内蔵プリセット: minimal / go-cli / ts-web / ts-electron / rust-cli）
+#    既定は allow_commands: ["*"] ＋破壊コマンド deny 構成。厳格ホワイトリスト運用にしたい場合は --strict を付与
 reifu new my-app --preset go-cli
 cd my-app && git init
 

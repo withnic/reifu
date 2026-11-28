@@ -59,7 +59,11 @@ func compileAgyCommandRules(patterns []string, isDeny bool) []string {
 			if isDeny {
 				// On Windows, literal command(...) matches the full line exactly;
 				// also deny argument forms so bare deny entries stay effective.
-				rules = appendUnique(rules, "command(regex:"+regexp.QuoteMeta(p)+" .*)")
+				pattern := regexp.QuoteMeta(p) + " .*"
+				if isCaseInsensitiveWindowsCommand(p) {
+					pattern = caseInsensitiveRegexTokens(pattern)
+				}
+				rules = appendUnique(rules, "command(regex:"+pattern+")")
 			}
 			continue
 		}
@@ -68,17 +72,52 @@ func compileAgyCommandRules(patterns []string, isDeny bool) []string {
 				rules = appendUnique(rules, "command(*)")
 				continue
 			}
+			ci := isDeny && isCaseInsensitiveWindowsCommand(p)
 			if !strings.ContainsAny(prefix, "*?") {
 				rules = appendUnique(rules, "command("+prefix+")")
 			} else {
-				rules = appendUnique(rules, "command(regex:"+globToAgyRegex(prefix)+")")
+				rules = appendUnique(rules, "command(regex:"+formatAgyRegex(globToAgyRegex(prefix), ci)+")")
 			}
-			rules = appendUnique(rules, "command(regex:"+globToAgyRegex(p)+")")
+			rules = appendUnique(rules, "command(regex:"+formatAgyRegex(globToAgyRegex(p), ci)+")")
 			continue
 		}
-		rules = appendUnique(rules, "command(regex:"+globToAgyRegex(p)+")")
+		ci := isDeny && isCaseInsensitiveWindowsCommand(p)
+		rules = appendUnique(rules, "command(regex:"+formatAgyRegex(globToAgyRegex(p), ci)+")")
 	}
 	return rules
+}
+
+func isCaseInsensitiveWindowsCommand(pattern string) bool {
+	head := pattern
+	if idx := strings.IndexAny(head, " \t*?"); idx >= 0 {
+		head = head[:idx]
+	}
+	switch strings.ToLower(head) {
+	case "remove-item", "rd", "rmdir", "del", "erase":
+		return true
+	default:
+		return false
+	}
+}
+
+func formatAgyRegex(expr string, caseInsensitive bool) string {
+	if !caseInsensitive {
+		return expr
+	}
+	return caseInsensitiveRegexTokens(expr)
+}
+
+// caseInsensitiveRegexTokens prefixes each whitespace-separated token with (?i)
+// so case-insensitivity applies both to Windows full-line matching and POSIX
+// per-token regex evaluation.
+func caseInsensitiveRegexTokens(expr string) string {
+	tokens := strings.Split(expr, " ")
+	for i, tok := range tokens {
+		if tok != "" && !strings.HasPrefix(tok, "(?i)") {
+			tokens[i] = "(?i)" + tok
+		}
+	}
+	return strings.Join(tokens, " ")
 }
 
 func globToAgyRegex(pattern string) string {

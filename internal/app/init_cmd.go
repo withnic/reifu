@@ -39,6 +39,7 @@ func (c CLI) setupProject(command string, args []string, requireNew bool) error 
 	noDocs := f.Bool("no-docs", false, "omit design document templates")
 	noSettings := f.Bool("no-settings", false, "omit agent settings and the state snapshot")
 	noHooks := f.Bool("no-hooks", false, "omit generated verification hooks")
+	strict := f.Bool("strict", false, "use strict command allowlist instead of allowing all non-denied commands")
 	mode := f.String("link-mode", "", "override preset link mode")
 	agents := f.String("agents", "", "comma-separated agent targets")
 	var force *bool
@@ -105,6 +106,13 @@ func (c CLI) setupProject(command string, args []string, requireNew bool) error 
 		cfg.Agents.Targets = nil
 		for _, agent := range strings.Split(*agents, ",") {
 			cfg.Agents.Targets = append(cfg.Agents.Targets, model.AgentName(strings.TrimSpace(agent)))
+		}
+	}
+	if *strict {
+		if len(cfg.Permissions.StrictAllowCommands) > 0 {
+			cfg.Permissions.AllowCommands = slices.Clone(cfg.Permissions.StrictAllowCommands)
+		} else if slices.Equal(cfg.Permissions.AllowCommands, []string{"*"}) {
+			cfg.Permissions.AllowCommands = []string{}
 		}
 	}
 	if err := cfg.Validate(); err != nil {

@@ -258,6 +258,15 @@ reifu/
   4. **他エージェントのスコープ**: 内蔵の `claude` / `codex` / `gemini` は既定でプレーンテキスト出力のためコマンド抽出は現時点では `agy` のみ対象としつつ、`<phase>_commands.json` のスキーマは `agent` フィールドを持つ汎用構造として将来の拡張に備える。
 * **採用理由**: `--log-file` 等の外部ログ解析に依存せず、`agy` 公式仕様の `stream-json` `tool_info.parameters.CommandLine` からゼロ外部依存かつクロスプラットフォームで正確なコマンドを取得できるため。また許可の自動昇格を行わないことで `reifu` のセキュリティ境界を維持しつつ、`reifu logs` → `.reifu.jsonc` 追記 → `reifu run --resume` の最短復旧ループを実現できる。
 
+### ADR-005: プリセット既定の権限方針（`allow_commands: ["*"]`＋強化 `deny_commands`）と `--strict` 切替
+
+* **背景**: ヘッドレス連続実行（`reifu run`）ではビルド・テスト以外にも `ls` / `mkdir` / `rg` / `git status` 等の補助コマンドが多用されるため、厳格ホワイトリストを既定にすると `agy` や Gemini CLI で頻繁に停止・調整が必要になり実用性を損なう。一方で高リスクな不可逆操作（`git push`・`git reset --hard`・`git clean`・`git checkout --`・`git branch -D`・`rm -rf`・Windows の `Remove-Item -Recurse` / `rd /s` / `rmdir /s` / `del /s`）は全環境で確実に抑止したい。
+* **決定**:
+  1. 全内蔵プリセットの既定を `"allow_commands": ["*"]`＋クロスプラットフォーム強化 `deny_commands`（Git 破壊系＋Unix `rm -rf`＋Windows 再帰削除系）とする。
+  2. 各プリセットに従来の個別コマンド許可リストを `permissions.strict_allow_commands` として保持し、`reifu new --strict` / `reifu init --strict` 指定時のみ `allow_commands` へ展開する（生成される `.reifu.jsonc` には `strict_allow_commands` を出力せず `version: 1` スキーマを維持）。
+  3. `agy` 向け `deny_commands` コンパイル（`internal/compiler/agy.go`）では、Windows の大文字小文字非区別コマンド（`Remove-Item` / `rd` / `rmdir` / `del` / `erase`）にトークン単位の `(?i)` を付与し、`remove-item -recurse` や `RD /S` のような表記揺れも確実に拒否する（`git branch -D` は安全な `-d` と区別するため大文字小文字を維持）。
+* **既知の制約**: Windows の `agy` では `echo hi && git push` のように連結されたコマンドが単一行マッチへフォールバックする場合があり、先頭一致の `deny` ルールだけではすり抜けうる。不可逆なリモート反映を防ぐにはリモート未設定・認証分離・`--strict` の併用を推奨する。
+
 # **5\. エージェントディレクトリ存在判定ポリシー**
 
 * `reifu sync` 実行時、`.reifu.jsonc` の `agents.targets` に含まれる各エージェント（`claude`, `codex`, `gemini`）について、プロジェクト直下の対応ディレクトリ（`.claude/`, `.codex/`, `.gemini/`）の存在を確認する。

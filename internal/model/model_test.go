@@ -26,6 +26,8 @@ func TestConfigValidation(t *testing.T) {
 		}},
 		{"permissions.allow_commands[0]", func(c *ReifuConfig) { c.Permissions.AllowCommands = []string{"go\nbuild"} }},
 		{"permissions.allow_commands[0]", func(c *ReifuConfig) { c.Permissions.AllowCommands = []string{"  "} }},
+		{"permissions.strict_allow_commands[0]", func(c *ReifuConfig) { c.Permissions.StrictAllowCommands = []string{"go\ntest"} }},
+		{"permissions.strict_allow_commands[0]", func(c *ReifuConfig) { c.Permissions.StrictAllowCommands = []string{""} }},
 		{"permissions.deny_commands[0]", func(c *ReifuConfig) { c.Permissions.DenyCommands = []string{"bad\rcommand"} }},
 		{"permissions.deny_commands[0]", func(c *ReifuConfig) { c.Permissions.DenyCommands = []string{""} }},
 		{"permissions.deny_paths[0]", func(c *ReifuConfig) { c.Permissions.DenyPaths = []string{"a\x00b"} }},

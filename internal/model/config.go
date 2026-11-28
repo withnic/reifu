@@ -127,9 +127,10 @@ func (c ReifuConfig) EffectiveSkillsTargets(agents []AgentName) []string {
 }
 
 type PermissionsModel struct {
-	AllowCommands []string `json:"allow_commands"`
-	DenyCommands  []string `json:"deny_commands"`
-	DenyPaths     []string `json:"deny_paths"`
+	AllowCommands       []string `json:"allow_commands"`
+	StrictAllowCommands []string `json:"strict_allow_commands,omitempty"`
+	DenyCommands        []string `json:"deny_commands"`
+	DenyPaths           []string `json:"deny_paths"`
 }
 type SandboxModel struct {
 	Mode           SandboxMode    `json:"mode"`
@@ -243,6 +244,7 @@ func (c ReifuConfig) Validate() error {
 		array  bool
 	}{
 		{"permissions.allow_commands", c.Permissions.AllowCommands, true},
+		{"permissions.strict_allow_commands", c.Permissions.StrictAllowCommands, true},
 		{"permissions.deny_commands", c.Permissions.DenyCommands, true},
 		{"permissions.deny_paths", c.Permissions.DenyPaths, true},
 		{"hooks.verify_command", []string{c.Hooks.VerifyCommand}, false},

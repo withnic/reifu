@@ -21,6 +21,9 @@
   },
   "permissions": {
     "allow_commands": [
+      "*"
+    ],
+    "strict_allow_commands": [
       "npm install",
       "npm run dev",
       "npm run format",
@@ -36,8 +39,16 @@
     ],
     "deny_commands": [
       "git push *",
+      "git push*",
       "git reset --hard*",
-      "rm -rf *"
+      "git clean*",
+      "git checkout -- *",
+      "git branch -D*",
+      "rm -rf *",
+      "Remove-Item*-Recurse*",
+      "rd /s*",
+      "rmdir /s*",
+      "del /s*"
     ],
     "deny_paths": [
       ".env",
