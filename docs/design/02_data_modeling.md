@@ -49,6 +49,13 @@
     "targets": ["CLAUDE.md", "GEMINI.md"]
   },
 
+  // 任意: .agents/skills/ を正本としたマルチエージェント Skills 連携（省略時はデフォルト有効）
+  "skills": {
+    "enabled": true,
+    "source": ".agents/skills",
+    "targets": [".claude/skills"]
+  },
+
   // エージェント横断の共通権限ポリシー（各ツール形式へ自動変換される）
   "permissions": {
     // 許可するシェルコマンドプレフィックス（例: "go test *", "go get *", "git status"）
@@ -349,6 +356,13 @@ type ReifuConfig struct {
       "target": "CLAUDE.md",
       "status": "OK",
       "mode": "hard"
+    }
+  ],
+  "skills": [
+    {
+      "target": ".claude/skills/my-skill",
+      "status": "OK",
+      "mode": "junction"
     }
   ],
   "targets": {

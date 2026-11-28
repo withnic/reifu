@@ -19,6 +19,7 @@
 2. 霊符が実行環境（`windows` / `wsl2-ext4` / `wsl2-ntfs` / `linux` / `darwin`）を自動判別する。
 3. 内蔵テンプレート（またはユーザーカスタムプリセット）を展開し、以下を生成する:
    * `AGENTS.md`（行動規範の正本）＋ `CLAUDE.md` / `GEMINI.md`（ハードリンクまたは環境最適リンク）
+   * `.agents/skills/`（存在する場合、Skills の正本として `.claude/skills/<name>` へスキル単位リンク同期）
    * `.reifu.jsonc`（プロジェクトローカル設定マスター）
    * `.claude/settings.json`、`.codex/config.toml`、`.gemini/settings.json`（`.reifu.jsonc` からコンパイル生成）
    * `.reifu.state.json`（同期状態スナップショット：`.gitignore` に自動追加）

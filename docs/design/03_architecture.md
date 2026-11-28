@@ -131,6 +131,9 @@ reifu/
 │       ├── link.go
 │       ├── link_windows.go
 │       ├── link_unix.go
+│       ├── dirlink.go                  # スキルディレクトリ単位のリンク作成・検証・安全削除
+│       ├── dirlink_windows.go          # Windows 管理者不要 NTFS ジャンクション作成・判定
+│       ├── dirlink_unix.go
 │       └── fsx_test.go
 ├── docs/
 │   ├── assets/
