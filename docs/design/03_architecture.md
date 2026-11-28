@@ -10,11 +10,12 @@
 
 ```text
 cmd/reifu/main.go               # CLIエントリーポイント・フラグ解析・終了コード制御
-  └── internal/app/             # サブコマンド別ユースケース（init / link / sync / status / preset）
+  └── internal/app/             # サブコマンド別ユースケース（new / init / link / sync / status / preset / hook / run / logs / version）
         ├── internal/model/     # ドメインモデル・定数・バリデーション・構造化エラー型（依存なし）
         ├── internal/jsonc/     # ゼロ依存 JSONC ストリッパー・パーサー・コメント保持編集
         ├── internal/compiler/  # .reifu.jsonc <-> Claude JSON / Codex TOML / Gemini JSON 変換・3wayマージ
         ├── internal/syncer/    # .reifu.state.json を使ったドリフト検知・--import 逆取り込みエンジン
+        ├── internal/runner/    # `reifu run` フェーズ実装→コミット→レビュー→コミット自動オーケストレーター
         ├── internal/template/  # go:embed 内蔵プリセット + カスタムデリミタ（[[ .Var ]]）展開エンジン
         ├── internal/sysenv/    # OS・WSL2・FS境界（NTFS vs ext4）自動判別アダプタ
         └── internal/fsx/       # パス境界検証・アトミック書き込み・リンク生成・inode検証・排他ロック
@@ -56,7 +57,16 @@ reifu/
 │   │   ├── sync_cmd.go
 │   │   ├── status_cmd.go
 │   │   ├── preset_cmd.go
-│   │   └── hook_cmd.go
+│   │   ├── hook_cmd.go
+│   │   ├── run_cmd.go
+│   │   ├── logs_cmd.go
+│   │   └── version_cmd.go
+│   ├── runner/
+│   │   ├── runner.go                   # フェーズ実行→レビュー→コミット自動ループ・中断再開・レポート生成
+│   │   ├── agents.go                   # claude / codex / gemini / agy 起動コマンド解決
+│   │   ├── git.go                      # ローカル git status / add(除外pathspec付き) / commit / diff --stat
+│   │   ├── logs.go                     # `reifu logs` 用読み取り専用ログ・レビュー・追従リーダー
+│   │   └── runner_test.go
 │   ├── model/
 │   │   ├── config.go
 │   │   ├── state.go

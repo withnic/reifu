@@ -42,7 +42,7 @@
 
 | 区分 | 項目 | 内容・仕様 |
 | :---- | :---- | :---- |
-| **In-Scope** | サブコマンド (6種) | **`reifu new <dir>`**: 新規ディレクトリを作成して雛形生成・リンク生成・初期コンパイル（`<dir>` 必須・既存ディレクトリ拒否）<br>**`reifu init [dir]`**: 既存ディレクトリへの導入・OS/FS自動判別・リンク生成・初期コンパイル<br>**`reifu link [dir]`**: `AGENTS.md` からのリンク検証・再構築<br>**`reifu sync [dir]`**: 各設定への非破壊コンパイル出力・`--import` による逆取り込み<br>**`reifu status [dir]`**: 状態・ドリフト診断レポート出力（`--quiet` / `--json` 対応）<br>**`reifu preset list / export`**: プリセット一覧表示およびローカル書き出し |
+| **In-Scope** | サブコマンド (9種) | **`reifu new <dir>`**: 新規ディレクトリを作成して雛形生成・リンク生成・初期コンパイル（`<dir>` 必須・既存ディレクトリ拒否）<br>**`reifu init [dir]`**: 既存ディレクトリへの導入・OS/FS自動判別・リンク生成・初期コンパイル<br>**`reifu link [dir]`**: `AGENTS.md` からのリンク検証・再構築<br>**`reifu sync [dir]`**: 各設定への非破壊コンパイル出力・`--import` による逆取り込み<br>**`reifu status [dir]`**: 状態・ドリフト診断レポート出力（`--quiet` / `--json` 対応）<br>**`reifu preset list / export`**: プリセット一覧表示およびローカル書き出し<br>**`reifu hook verify [dir]`**: クロスプラットフォーム検証フックのシェル非経由実行<br>**`reifu run [dir]`**: `prompts/phases/*.md` の実装 → コミット → `prompts/review.md` レビュー → コミットを複数エージェント間で自動オーケストレーション実行（`claude` / `codex` / `gemini` / `agy` 対応、`--resume`・リアルタイム進捗＆ハートビート・ログ／レビュー履歴保存対応）<br>**`reifu logs [dir]`**: `reifu run` の進捗サマリー・実装ログ・レビューレポートの安全な読み取り専用閲覧（`--list` / `--run` / `--phase` / `--review` / `-f` 追従 / `--json` 対応） |
 |  | 内蔵プリセット | `minimal`（標準・言語非依存）、`go-cli`、`ts-web`、`ts-electron`、`rust-cli` |
 |  | アーキテクチャ | Go 1.23+ 標準ライブラリのみで完結（外部依存なし、JSONC/簡易TOML実装を内製） |
 |  | プラットフォーム | Windows 11（PowerShell 7）、WSL2（Ubuntu）、macOS、Linux |
