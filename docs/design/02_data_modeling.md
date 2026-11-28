@@ -426,7 +426,7 @@ type ReifuConfig struct {
 | `reifu preset list` | （なし） | 内蔵およびユーザー設定ディレクトリ（`os.UserConfigDir()/reifu/presets/`）のプリセット一覧を表示（オーバーライド元も明示）。 |
 | `reifu preset export <name>` | `--out <dir>` / `--force` | 指定プリセット `<name>` を出力先ディレクトリ（省略時は `os.UserConfigDir()/reifu/presets/`）へ `<name>.jsonc` として書き出す。既存ファイルがある場合は `--force` なしならエラー。 |
 | `reifu hook verify [dir]` | （なし） | `.reifu.jsonc` の `workflow.verify_steps` をシェル非経由で順次実行するクロスプラットフォーム検証フック。`stop_hook_active: true`、`BLOCKED_REPORT.md` 存在、`workflow.require_files` 未存在、未定義 npm スクリプト時は Exit `0` でスキップ。失敗時は `stderr` へ出力し Exit `2`（`stdout` 非汚染）。 |
-| `reifu run [dir]` | `--implementer <agent>` / `--reviewer <agent>` / `--phase <name>` / `--from <name>` / `--no-review` / `--no-commit` / `--allow-dirty` / `--resume` / `--timeout <dur>` / `--notify[=mode]` / `--dry-run` / `--json` | `prompts/phases/*.md` を辞書順に「実装 → コミット → `prompts/review.md` レビュー → コミット」で自動実行。`claude` / `codex` / `gemini` / `agy`（`antigravity`）対応。進捗を `.reifu.run.json`、ログ・レビュー結果を `.reifu/runs/<run-id>/` へ保存。`--notify` で完了／停止時の通知音・OS 通知に対応。 |
+| `reifu run [dir]` | `--implementer <agent>` / `--reviewer <agent>` / `--phase <name>` / `--from <name>` / `--no-review` / `--no-commit` / `--allow-dirty` / `--resume` / `--skip-completed` / `--timeout <dur>` / `--notify[=mode]` / `--dry-run` / `--json` | `prompts/phases/*.md` を辞書順に「実装 → コミット → `prompts/review.md` レビュー → コミット」で自動実行。`claude` / `codex` / `gemini` / `agy`（`antigravity`）対応。進捗を `.reifu.run.json`、ログ・レビュー結果を `.reifu/runs/<run-id>/` へ保存。`--notify` で完了／停止時の通知音・OS 通知に対応。 |
 | `reifu logs [dir]` | `--list` / `--run <id>` / `--phase <name>` / `--review` / `-f` (`--follow`) / `--json` | `reifu run` の実行進捗サマリー・実装ログ・レビューレポートを安全に読み取り専用で閲覧（`-f` は都度クローズ方式でロック競合ゼロ）。 |
 
 ## **6.2 `reifu status --json` 出力スキーマ**
@@ -464,6 +464,27 @@ type ReifuConfig struct {
       "path": ".gemini/settings.json",
       "status": "SKIPPED"
     }
+  },
+  "runner": {
+    "blocked": false,
+    "git_repo": true,
+    "git_dirty": false,
+    "phases": ["01_foundation", "02_feature"],
+    "pending_phases": ["02_feature"],
+    "agents": [
+      {"name": "agy", "available": false, "is_custom": false},
+      {"name": "claude", "available": false, "is_custom": false},
+      {"name": "codex", "available": false, "is_custom": false},
+      {"name": "gemini", "available": false, "is_custom": false}
+    ],
+    "latest_run": {
+      "run_id": "20261129T000000Z-0123456789abcdef",
+      "started_at": "2026-11-29T00:00:00Z",
+      "updated_at": "2026-11-29T00:01:00Z",
+      "status": "completed",
+      "completed": 1,
+      "total": 1
+    }
   }
 }
 ```
@@ -487,11 +508,13 @@ type ReifuConfig struct {
 | `SyncReport` | `root`, `dry_run`, `state_missing`, `changed_paths`（パス配列）, `warnings`（文字列配列）, `targets`（エージェント名から設定状態へのマップ）, `skills`（同期計画時のリンク状態） |
 | `LinkCommandReport` | `root`, `mode`, `check`, `has_issues`, `links`, `skills`。検査結果に問題があれば JSON 出力後に Exit 3 |
 | `SetupReport` | `command`（`new` / `init`）, `root`, `preset`, `dry_run`, `files`（雛形ファイルのパス配列）, `links`, `changed_paths`（設定・状態・スキルの同期対象パス配列）, `warnings`。dry-run の `links` は予定の宛先と現在の状態を示す |
-| `RunnerStatus` | `blocked`, `git_repo`, `git_dirty`, `phases`（拡張子なしの昇順の名前配列）, `agents`（名前昇順の `AgentStatus` 配列）, `latest_run`（取得できた場合の `RunSummary`） |
+| `RunnerStatus` | `blocked`, `git_repo`, `git_dirty`, `phases`（拡張子なしの昇順の名前配列）, `pending_phases`（現在の未完了フェーズの昇順の名前配列）, `agents`（名前昇順の `AgentStatus` 配列）, `latest_run`（取得できた場合の `RunSummary`） |
 | `AgentStatus` | `name`, `available`, `is_custom`, `executable`（検出した場合の絶対パス） |
 | `RunSummary` | `run_id`, `started_at`, `updated_at`, `status`, `completed`, `total` |
 
-`status --json` は既存のレポートに `runner` を追加する。取得できない `latest_run` は省略する。ランナーの状態は `has_issues` と `status --quiet` の終了判定から独立している。設定ファイルが未作成のディレクトリでも `status --json` は `runner` と `state_missing: true` を返す。
+`status --json` は既存のレポートに `runner` を追加する。`runner.pending_phases` は必須配列で、現在の `runner.phases` から最新の `.reifu.run.json` で完了済みの名前を除いた結果を返す。名前の照合は大文字小文字を区別しない。チェックポイントがなければ、または読み取れなければ `runner.phases` と同じになる。取得できない `latest_run` は省略する。ランナーの状態は `has_issues` と `status --quiet` の終了判定から独立している。設定ファイルが未作成のディレクトリでも `status --json` は `runner` と `state_missing: true` を返す。
+
+`run --skip-completed` は新しいランを作り、最新のチェックポイントから名前が一致する完了済みフェーズの `status`、`implement_commit`、`review_commit`、`implement_log`、`review_report`、`commands_log`、`duration_ms` を引き継ぐ。チェックポイントを読めない場合は stderr に警告し、全フェーズを対象とする。未完了のフェーズがなければ新しい完了状態を保存して Exit 0 を返す。dry-run では計画に完了済みフェーズを含め、保存を行わない。`--phase`、`--from`、`--resume` との併用は Exit 1 になる。
 
 ## `RunEvent` の NDJSON スキーマ
 
@@ -511,5 +534,7 @@ type ReifuConfig struct {
 | `phase_failed` | フェーズ識別情報, `status: "failed" \| "blocked"`, `error`, `denied_commands`（許可不足で拒否されたコマンドがある場合） |
 | `run_completed` | `run_id`, `status: "completed"`, `state` |
 | `run_failed` | `run_id`, `status: "failed" \| "blocked"`, `error`, `denied_commands`（許可不足で拒否されたコマンドがある場合）, `state` |
+
+`--skip-completed` で引き継いだフェーズは `run_started` と終端イベントの `state` に含まれる。フェーズ単位のイベントは実行したフェーズから送られ、完了数と総数には引き継いだフェーズも含まれる。
 
 ランごとの終端イベントは `run_plan`、`run_completed`、`run_failed` のうち 1 行。ランナーが終端を送る前にエラー終了した場合は、CLI が `run_failed` を補う。フォールバックの `status` は `BLOCKED_REPORT.md` による Exit 2 で `blocked`、それ以外で `failed` になる。`--resume` で `implement_commit` / `review_commit` から再開したステップでは `commit` / `step_completed` が出て、`step_started` は省略される。キャンセルとタイムアウトはどちらも `failed` になり、`error` の `context canceled` / `context deadline exceeded` で区別できる。

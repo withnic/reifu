@@ -41,8 +41,10 @@ type Options struct {
 	Implementer, Reviewer                          string
 	Phase, From                                    string
 	Resume, NoReview, NoCommit, AllowDirty, DryRun bool
+	SkipCompleted                                  bool
 	Timeout, HeartbeatInterval                     time.Duration
 	Progress                                       io.Writer
+	Diagnostics                                    io.Writer
 	Notify                                         model.NotifyMode
 	Notifier                                       func(sysenv.Notification)
 	EventSink                                      func(model.RunEvent)
@@ -98,8 +100,14 @@ func (e *execution) phaseEvent(kind model.RunEventType, i int, phase *model.Phas
 }
 
 func Run(ctx context.Context, opts Options) (Result, error) {
-	if opts.Phase != "" && opts.From != "" || opts.Resume && (opts.Phase != "" || opts.From != "") {
-		return Result{}, fmt.Errorf("phase, from and resume are mutually exclusive")
+	var selections int
+	for _, selected := range []bool{opts.Phase != "", opts.From != "", opts.Resume, opts.SkipCompleted} {
+		if selected {
+			selections++
+		}
+	}
+	if selections > 1 {
+		return Result{}, fmt.Errorf("--phase, --from, --resume and --skip-completed are mutually exclusive")
 	}
 	if opts.Resume && (opts.NoReview || opts.NoCommit) {
 		return Result{}, fmt.Errorf("resume cannot be combined with --no-review or --no-commit")
@@ -129,6 +137,9 @@ func Run(ctx context.Context, opts Options) (Result, error) {
 	if opts.Progress == nil {
 		opts.Progress = os.Stderr
 	}
+	if opts.Diagnostics == nil {
+		opts.Diagnostics = opts.Progress
+	}
 	if opts.HeartbeatInterval <= 0 {
 		opts.HeartbeatInterval = 30 * time.Second
 	}
@@ -141,7 +152,7 @@ func Run(ctx context.Context, opts Options) (Result, error) {
 			return Result{}, err
 		}
 		plan := &Plan{Implementer: e.implementer, State: e.run}
-		if !e.run.NoReview {
+		if e.reviewer.Name != "" {
 			plan.Reviewer = &e.reviewer
 		}
 		e.emit(model.RunEvent{Type: model.EventRunPlan, Plan: plan})
@@ -261,6 +272,9 @@ func (e *execution) prepare() error {
 			return err
 		}
 		e.run.Phases = phases
+		if e.SkipCompleted {
+			e.carryCompleted()
+		}
 		if e.Phase != "" || e.From != "" {
 			i, err := phaseIndex(e.run, firstSet(e.Phase, e.From))
 			if err != nil {
@@ -278,10 +292,14 @@ func (e *execution) prepare() error {
 		return err
 	}
 	e.run.Implementer = firstSet(e.Implementer, e.run.Implementer, e.Config.Runner.Implementer)
+	e.run.Reviewer = firstSet(e.Reviewer, e.run.Reviewer, e.Config.Runner.Reviewer, e.run.Implementer)
+	if e.SkipCompleted && e.run.Summary().Status == model.PhaseCompleted {
+		fmt.Fprintln(e.Diagnostics, "実行するフェーズがない")
+		return nil
+	}
 	if e.run.Implementer == "" {
 		return fmt.Errorf("missing implementer agent; specify --implementer or set runner.implementer in .reifu.jsonc")
 	}
-	e.run.Reviewer = firstSet(e.Reviewer, e.run.Reviewer, e.Config.Runner.Reviewer, e.run.Implementer)
 	var err error
 	e.implementer, err = ResolveAgent(e.Config, e.run.Implementer)
 	if err != nil {
@@ -324,6 +342,9 @@ func (e *execution) prepare() error {
 		}
 	}
 	for _, phase := range e.run.Phases {
+		if e.SkipCompleted && phase.Status == model.PhaseCompleted {
+			continue
+		}
 		for _, rel := range []string{phase.File, phase.ImplementLog, phase.ReviewReport, e.run.RunDir + "/" + phase.Name + "_commands.json"} {
 			if _, err := projectPath(e.Root, rel); err != nil {
 				return err
@@ -331,6 +352,37 @@ func (e *execution) prepare() error {
 		}
 	}
 	return nil
+}
+
+func completedPhases(run model.RunState) map[string]model.PhaseRunRecord {
+	completed := make(map[string]model.PhaseRunRecord)
+	for _, phase := range run.Phases {
+		if phase.Status == model.PhaseCompleted {
+			completed[strings.ToLower(phase.Name)] = phase
+		}
+	}
+	return completed
+}
+
+func (e *execution) carryCompleted() {
+	previous, err := loadState(e.Root, checkpoint)
+	if err != nil {
+		fmt.Fprintf(e.Diagnostics, "warning: could not read %s; starting all phases: %v\n", checkpoint, err)
+		return
+	}
+	completed := completedPhases(previous)
+	for i := range e.run.Phases {
+		phase := &e.run.Phases[i]
+		if prior, ok := completed[strings.ToLower(phase.Name)]; ok {
+			phase.Status = prior.Status
+			phase.ImplementCommit = prior.ImplementCommit
+			phase.ReviewCommit = prior.ReviewCommit
+			phase.ImplementLog = prior.ImplementLog
+			phase.ReviewReport = prior.ReviewReport
+			phase.CommandsLog = prior.CommandsLog
+			phase.DurationMS = prior.DurationMS
+		}
+	}
 }
 
 func firstSet(values ...string) string {
@@ -459,6 +511,9 @@ func (e *execution) execute(ctx context.Context) (runErr error) {
 			e.emit(event)
 		}()
 	}
+	if e.SkipCompleted && e.run.Summary().Status == model.PhaseCompleted {
+		e.summary()
+	}
 	for i := range e.run.Phases {
 		phase := &e.run.Phases[i]
 		if phase.Status == model.PhaseCompleted {
@@ -495,15 +550,15 @@ func (e *execution) summary() {
 	for _, p := range e.run.Phases {
 		review := ""
 		if !e.run.NoReview {
-			review = fmt.Sprintf(" [review](%s)", markdownLink(filepath.Base(p.ReviewReport)))
+			review = fmt.Sprintf(" [review](%s)", summaryLink(e.run.RunDir, p.ReviewReport))
 		}
 		commands := ""
 		if p.CommandsLog != "" {
-			commands = fmt.Sprintf(" [commands](%s)", markdownLink(filepath.Base(p.CommandsLog)))
+			commands = fmt.Sprintf(" [commands](%s)", summaryLink(e.run.RunDir, p.CommandsLog))
 		}
 		fmt.Fprintf(&body, "| %s | %s | %s | %s | %d | [log](%s)%s%s |\n",
 			strings.ReplaceAll(p.Name, "|", "\\|"), p.Status, p.ImplementCommit, p.ReviewCommit, p.DurationMS,
-			markdownLink(filepath.Base(p.ImplementLog)), review, commands)
+			summaryLink(e.run.RunDir, p.ImplementLog), review, commands)
 		if len(p.DeniedCommands) > 0 {
 			quoted := make([]string, len(p.DeniedCommands))
 			for i, cmd := range p.DeniedCommands {
@@ -522,6 +577,14 @@ func (e *execution) summary() {
 	if err := fsx.WriteFileAtomic(e.Root, e.run.RunDir+"/summary.md", []byte(body.String())); err != nil {
 		fmt.Fprintf(e.Progress, "warning: write run summary: %v\n", err)
 	}
+}
+
+func summaryLink(runDir, rel string) string {
+	dir, file := filepath.ToSlash(filepath.Dir(rel)), filepath.Base(rel)
+	if dir == runDir {
+		return markdownLink(file)
+	}
+	return "../" + markdownLink(filepath.Base(dir)) + "/" + markdownLink(file)
 }
 
 func (e *execution) collectDeniedCommands() []string {

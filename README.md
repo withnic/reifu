@@ -77,7 +77,10 @@ reifu logs -f          # 実行中の実装ログを追従表示
 # 5. 途中停止した場合は原因解消後に中断ステップから再開
 reifu run --resume --allow-dirty
 
-# 6. .reifu.jsonc を編集したら各エージェント設定へ反映（以降の機能追加は prompts/add_feature.md から同じ流れ）
+# 6. 機能追加でフェーズを足したら、完了済みフェーズを引き継いで残りを実行
+reifu run --skip-completed --implementer codex --reviewer claude
+
+# 7. .reifu.jsonc を編集したら各エージェント設定へ反映
 reifu sync
 ```
 
@@ -93,7 +96,7 @@ reifu sync
 | `reifu init [dir]` | 既存の空フォルダ／Git リポジトリに `reifu` を導入 |
 | `reifu sync [dir]` | `.reifu.jsonc` を各エージェント設定へ非破壊コンパイル（`--import`, `--dry-run`, `--no-hooks` 対応） |
 | `reifu status [dir]` | 環境・リンク・同期状態を診断（`--json`, `--quiet` 対応） |
-| `reifu run [dir]` | フェーズを順番に実装・レビューし、ローカルにコミット（`--resume` 対応） |
+| `reifu run [dir]` | フェーズを順番に実装・レビューし、ローカルにコミット（`--resume`, `--skip-completed` 対応） |
 | `reifu logs [dir]` | 実行履歴・実装ログ・レビューレポートを閲覧（`-f` で追従） |
 | `reifu link [dir]` | `AGENTS.md` リンクの検証（`--check`）および再構築（`--force`） |
 | `reifu preset list / export` | 内蔵・カスタムプリセットの一覧表示および書き出し |

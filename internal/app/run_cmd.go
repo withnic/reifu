@@ -44,7 +44,7 @@ func (n *notifyFlag) Set(value string) error {
 
 func (c CLI) runPhases(args []string) (runErr error) {
 	f := c.flags("run", "[dir]")
-	opts := runner.Options{Progress: c.Stderr}
+	opts := runner.Options{Progress: c.Stderr, Diagnostics: c.Stderr}
 	f.StringVar(&opts.Implementer, "implementer", "", "implementation agent (defaults to runner.implementer)")
 	f.StringVar(&opts.Reviewer, "reviewer", "", "review agent (defaults to runner.reviewer or the implementer)")
 	f.StringVar(&opts.Phase, "phase", "", "execute one named phase")
@@ -53,6 +53,7 @@ func (c CLI) runPhases(args []string) (runErr error) {
 	f.BoolVar(&opts.NoCommit, "no-commit", false, "skip automatic Git commits")
 	f.BoolVar(&opts.AllowDirty, "allow-dirty", false, "allow starting with uncommitted changes")
 	f.BoolVar(&opts.Resume, "resume", false, "resume the latest run from its checkpoint")
+	f.BoolVar(&opts.SkipCompleted, "skip-completed", false, "start a new run and carry over completed phases from the latest checkpoint")
 	f.DurationVar(&opts.Timeout, "timeout", runner.DefaultTimeout, "timeout per agent step (0 for unlimited)")
 	f.BoolVar(&opts.DryRun, "dry-run", false, "show the plan without running agents or writing files")
 	f.Var((*notifyFlag)(&opts.Notify), "notify", "notify on completion or stop (off, end, phase; bare flag means end)")
@@ -148,8 +149,10 @@ func (c CLI) runPhases(args []string) (runErr error) {
 		return errors.Join(err, writeJSON(c.Stdout, result.State))
 	case result.Plan != nil:
 		plan := result.Plan
-		if _, err := fmt.Fprintf(c.Stdout, "Implementer %s: %q\n", plan.Implementer.Name, plan.Implementer.Argv); err != nil {
-			return err
+		if plan.Implementer.Name != "" {
+			if _, err := fmt.Fprintf(c.Stdout, "Implementer %s: %q\n", plan.Implementer.Name, plan.Implementer.Argv); err != nil {
+				return err
+			}
 		}
 		if plan.Reviewer != nil {
 			if _, err := fmt.Fprintf(c.Stdout, "Reviewer %s: %q\n", plan.Reviewer.Name, plan.Reviewer.Argv); err != nil {

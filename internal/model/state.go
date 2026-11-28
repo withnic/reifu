@@ -92,12 +92,13 @@ type SetupReport struct {
 }
 
 type RunnerStatus struct {
-	Blocked   bool          `json:"blocked"`
-	GitRepo   bool          `json:"git_repo"`
-	GitDirty  bool          `json:"git_dirty"`
-	Phases    []string      `json:"phases"`
-	Agents    []AgentStatus `json:"agents"`
-	LatestRun *RunSummary   `json:"latest_run,omitempty"`
+	Blocked       bool          `json:"blocked"`
+	GitRepo       bool          `json:"git_repo"`
+	GitDirty      bool          `json:"git_dirty"`
+	Phases        []string      `json:"phases"`
+	PendingPhases []string      `json:"pending_phases"`
+	Agents        []AgentStatus `json:"agents"`
+	LatestRun     *RunSummary   `json:"latest_run,omitempty"`
 }
 
 type AgentStatus struct {

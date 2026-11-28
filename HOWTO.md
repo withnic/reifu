@@ -330,6 +330,8 @@ reifu run --implementer agy --reviewer gemini
 
 異常終了、タイムアウト、Ctrl+C、`BLOCKED_REPORT.md` 検出時は実行を停止します。状態とログを確認し、停止原因を解消して `reifu run --resume` で中断したステップから続けます。`BLOCKED_REPORT.md` がある場合は内容を確認し、解消後に取り除きます。再開時は保存済みのレビュー・コミット設定が使われます。
 
+機能追加で `prompts/phases/` にフェーズを足したら、`reifu run --skip-completed` で新しいランを開始します。最新のチェックポイントから完了済みの記録を名前で引き継ぎ、新規・未完了のフェーズを先頭ステップから実行します。名前の照合では大文字小文字を区別しません。フェーズ本文の編集を反映して再実行するには `--phase <name>` を使います。`--skip-completed` と `--phase`、`--from`、`--resume` はそれぞれ排他です。
+
 自動コミットを行う場合は、既定で未コミット変更のある Git 作業ツリーを拒否します。変更をコミットまたは退避するか、差分を確認して取り込む場合は `--allow-dirty`（再開時は `--resume --allow-dirty`）を指定します。両コマンドはホームディレクトリ直下を拒否します。ラン状態とログは `.reifu.run.json` と `.reifu/runs/` に保管され、reifu の自動コミット対象から除外されます。
 
 ```sh
@@ -351,6 +353,7 @@ reifu logs -f                         # 実装ログを追従。Ctrl+C で終了
 2. `reifu status <dir> --json` で設定とランナーの状態を読む。`reifu sync <dir> --dry-run --json` は変更予定と警告を返し、`reifu sync <dir> --json` で適用する。
 3. `reifu link <dir> --check --json` は Exit 3 でも結果を取得できる。リンクを作成・修復するには `reifu link <dir> --json` を使う。
 4. `reifu run <dir> --implementer codex --reviewer claude --stream-json --cancel-on-stdin-eof` を stdin パイプ付きで起動する。イベントは stdout から 1 行ずつ JSON として読み、stderr も並行して読む。中断するには親側の stdin 書き込みパイプを閉じ、終端イベントと終了コードを受け取る。`--dry-run --stream-json` では `run_plan` が 1 行返る。
+5. 機能追加でフェーズを足した後は、`status --json` の `runner.pending_phases` を見る。現在のフェーズのうち最新のチェックポイントで完了していない名前が昇順で並び、全完了なら `[]`、チェックポイントが読めなければ `runner.phases` と同じになる。残りを実行するには手順 4 のコマンドに `--skip-completed` を付ける。引き継いだフェーズは開始・終端イベントの `state.phases` に含まれる。フェーズ単位のイベントは実際に実行する分だけ届く。
 
 ランの最終結果だけ必要なら `run --json`、保存済みのサマリ一覧には `logs --list --json` を使う。
 

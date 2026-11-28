@@ -2,6 +2,7 @@ package runner
 
 import (
 	"context"
+	"errors"
 	"maps"
 	"os"
 	"slices"
@@ -13,7 +14,7 @@ import (
 
 // InspectStatus reports available runner information without requiring a runnable project.
 func InspectStatus(ctx context.Context, root string, cfg model.ReifuConfig) model.RunnerStatus {
-	status := model.RunnerStatus{Phases: []string{}}
+	status := model.RunnerStatus{Phases: []string{}, PendingPhases: []string{}}
 	if path, err := projectPath(root, blockedReport); err == nil {
 		_, err := os.Lstat(path)
 		status.Blocked = err == nil
@@ -65,7 +66,17 @@ func InspectStatus(ctx context.Context, root string, cfg model.ReifuConfig) mode
 		}
 		status.Agents = append(status.Agents, agent)
 	}
-	if run, err := LoadRun(root, ""); err == nil {
+	run, err := loadState(root, checkpoint)
+	completed := completedPhases(run)
+	for _, name := range status.Phases {
+		if _, ok := completed[strings.ToLower(name)]; err != nil || !ok {
+			status.PendingPhases = append(status.PendingPhases, name)
+		}
+	}
+	if errors.Is(err, os.ErrNotExist) {
+		run, err = LoadRun(root, "")
+	}
+	if err == nil {
 		summary := run.Summary()
 		status.LatestRun = &summary
 	}

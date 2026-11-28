@@ -74,9 +74,7 @@ func validateRunState(run model.RunState) error {
 	for _, phase := range run.Phases {
 		expected, err := phaseRecord(run.RunDir, phase.Name+".md")
 		key := strings.ToLower(phase.Name)
-		expectedCommands := run.RunDir + "/" + phase.Name + "_commands.json"
-		if err != nil || seen[key] || phase.File != expected.File || phase.ImplementLog != expected.ImplementLog || phase.ReviewReport != expected.ReviewReport ||
-			(phase.CommandsLog != "" && phase.CommandsLog != expectedCommands) {
+		if err != nil || seen[key] || phase.File != expected.File || !validPhaseArtifacts(run.RunDir, phase) {
 			return fmt.Errorf("invalid phase %q in run %q", phase.Name, run.RunID)
 		}
 		seen[key] = true
@@ -87,6 +85,24 @@ func validateRunState(run model.RunState) error {
 		}
 	}
 	return nil
+}
+
+func validPhaseArtifacts(runDir string, phase model.PhaseRunRecord) bool {
+	dir, name := runDir, phase.Name
+	if phase.Status == model.PhaseCompleted {
+		// Completed phases may refer to one earlier run, including after a case-only rename.
+		rel, ok := strings.CutPrefix(phase.ImplementLog, runsDir+"/")
+		id, file, hasFile := strings.Cut(rel, "/")
+		stem, hasSuffix := strings.CutSuffix(file, "_implement.log")
+		if !ok || !hasFile || !hasSuffix || model.ValidateRunID(id) != nil ||
+			strings.ToLower(stem) != strings.ToLower(name) || strings.ContainsAny(stem, "/\\") {
+			return false
+		}
+		dir, name = runsDir+"/"+id, stem
+	}
+	return phase.ImplementLog == dir+"/"+name+"_implement.log" &&
+		phase.ReviewReport == dir+"/"+name+"_review.md" &&
+		(phase.CommandsLog == "" || phase.CommandsLog == dir+"/"+name+"_commands.json")
 }
 func ListRuns(root string) ([]model.RunSummary, error) {
 	summaries := []model.RunSummary{}

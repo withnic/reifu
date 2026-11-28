@@ -90,8 +90,11 @@ func TestPhaseAgentProcess(t *testing.T) {
 	}
 	role := os.Args[len(os.Args)-2]
 	phase := "01_first"
-	if strings.Contains(string(prompt), "02_second") {
-		phase = "02_second"
+	for _, name := range []string{"02_second", "03_third", "04_fourth", "05_fifth"} {
+		if strings.Contains(string(prompt), name) {
+			phase = name
+			break
+		}
 	}
 	if os.Getenv("REIFU_CLI_TEST_WAIT") == "1" {
 		fmt.Fprintln(os.Stdout, "<agent-ready>")
@@ -101,7 +104,7 @@ func TestPhaseAgentProcess(t *testing.T) {
 		t.Fatal(err)
 	}
 	fmt.Printf("mock %s %s\n", role, phase)
-	if role == "review" && os.Getenv("REIFU_CLI_TEST_FAIL_REVIEW") == "1" {
+	if fail := os.Getenv("REIFU_CLI_TEST_FAIL_REVIEW"); role == "review" && (fail == "1" || fail == phase) {
 		os.Exit(7)
 	}
 	if os.Getenv("REIFU_CLI_TEST_SELF_COMMIT") == "1" {
@@ -442,6 +445,185 @@ func TestPhaseResumeCLI(t *testing.T) {
 	}
 }
 
+func checkPendingPhases(t *testing.T, s cliTest, want ...string) {
+	t.Helper()
+	out, _ := s.run(model.ExitOK, "status", "--json")
+	var status model.StatusReport
+	parseCLIJSON(t, out, &status)
+	if status.Runner == nil || status.Runner.PendingPhases == nil || !slices.Equal(status.Runner.PendingPhases, want) {
+		t.Fatalf("want pending phases %v, got %s", want, out)
+	}
+}
+
+func checkCarriedPhase(t *testing.T, got, prior model.PhaseRunRecord) {
+	t.Helper()
+	if got.Status != model.PhaseCompleted || got.ImplementCommit != prior.ImplementCommit ||
+		got.ReviewCommit != prior.ReviewCommit || got.ImplementLog != prior.ImplementLog ||
+		got.ReviewReport != prior.ReviewReport || got.CommandsLog != prior.CommandsLog || got.DurationMS != prior.DurationMS {
+		t.Fatalf("carried phase %+v differs from prior phase %+v", got, prior)
+	}
+}
+
+func TestRunSkipCompletedCLI(t *testing.T) {
+	s := phaseCLI(t)
+	for _, name := range []string{"03_third", "04_fourth"} {
+		s.write("prompts/phases/"+name+".md", "Implement "+name+"\n")
+	}
+	s.git("add", "prompts")
+	s.git("commit", "-qm", "add phases")
+	checkPendingPhases(t, s, "01_first", "02_second", "03_third", "04_fourth")
+
+	out, stderr := s.run(model.ExitOK, "run", "--skip-completed", "--stream-json")
+	contains(t, stderr, "warning: could not read .reifu.run.json")
+	events := parseRunEvents(t, out)
+	var started []string
+	for _, event := range events {
+		if event.Type == model.EventPhaseStarted {
+			started = append(started, event.Phase)
+		}
+	}
+	if !slices.Equal(started, []string{"01_first", "02_second", "03_third", "04_fourth"}) {
+		t.Fatalf("fallback executed %v", started)
+	}
+	prior := events[len(events)-1].State
+	if prior == nil || prior.Summary().Completed != 4 {
+		t.Fatalf("unexpected initial state: %+v", prior)
+	}
+	for _, phase := range prior.Phases {
+		if phase.ImplementCommit == "" || phase.ReviewCommit == "" {
+			t.Fatalf("missing initial commits: %+v", phase)
+		}
+	}
+	// Seed command history using the same on-disk format as the agy runner.
+	prior.Phases[0].CommandsLog = prior.RunDir + "/01_first_commands.json"
+	s.write(prior.Phases[0].CommandsLog, `{"version":1,"phase":"01_first","commands":[]}`+"\n")
+	data, err := json.Marshal(prior)
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkpoint := string(data) + "\n"
+	s.write(".reifu.run.json", checkpoint)
+	checkPendingPhases(t, s)
+
+	s.write("prompts/phases/05_fifth.md", "Implement 05_fifth\n")
+	s.git("add", "prompts")
+	s.git("commit", "-qm", "add fifth phase")
+	checkPendingPhases(t, s, "05_fifth")
+	out, _ = s.run(model.ExitOK, "run", "--skip-completed", "--dry-run", "--json")
+	var plan model.RunPlan
+	parseCLIJSON(t, out, &plan)
+	if plan.State.Summary().Completed != 4 || plan.State.Summary().Total != 5 ||
+		plan.State.Phases[4].Status != model.PhasePending || s.read(".reifu.run.json") != checkpoint {
+		t.Fatalf("unexpected dry run: %s", out)
+	}
+	missing(t, filepath.Join(s.root, plan.State.RunDir))
+	missing(t, filepath.Join(s.root, "implement-05_fifth.txt"))
+	for i, phase := range prior.Phases {
+		checkCarriedPhase(t, plan.State.Phases[i], phase)
+	}
+
+	out, _ = s.run(model.ExitOK, "run", "--skip-completed", "--stream-json")
+	events = parseRunEvents(t, out)
+	begin, end := events[0], events[len(events)-1]
+	if begin.Type != model.EventRunStarted || end.Type != model.EventRunCompleted || begin.State == nil || end.State == nil ||
+		begin.State.Summary().Completed != 4 || begin.State.Summary().Total != 5 || begin.RunID == prior.RunID ||
+		end.State.Summary().Completed != 5 || end.State.Summary().Total != 5 || end.RunID != begin.RunID {
+		t.Fatalf("unexpected events: %s", out)
+	}
+	started = nil
+	for _, event := range events {
+		if event.Phase != "" && event.Phase != "05_fifth" {
+			t.Fatalf("inherited phase emitted an event: %+v", event)
+		}
+		if event.Type == model.EventPhaseStarted {
+			started = append(started, event.Phase)
+		}
+	}
+	if !slices.Equal(started, []string{"05_fifth"}) {
+		t.Fatalf("executed %v, want 05_fifth", started)
+	}
+	for i, phase := range prior.Phases {
+		checkCarriedPhase(t, begin.State.Phases[i], phase)
+		checkCarriedPhase(t, end.State.Phases[i], phase)
+	}
+	checkPendingPhases(t, s)
+	out, _ = s.run(model.ExitOK, "logs", "--run", end.RunID, "--phase", "01_first")
+	contains(t, out, "mock implement 01_first")
+	out, _ = s.run(model.ExitOK, "logs", "--review", "--phase", "01_first")
+	contains(t, out, "mock review 01_first")
+	commands, err := runner.ReadPhaseCommands(s.root, *end.State, "01_first")
+	if err != nil || commands.Phase != "01_first" {
+		t.Fatalf("unexpected inherited commands: %+v, %v", commands, err)
+	}
+	contains(t, s.read(end.State.RunDir+"/summary.md"), "../"+prior.RunID+"/01_first_implement.log")
+
+	// Carry the same paths across another run and a case-only rename, with no agents configured.
+	s.remove("prompts/phases/01_first.md")
+	s.write("prompts/phases/01_FIRST.md", "Implement 01_FIRST\n")
+	s.remove("prompts/review.md")
+	s.remove(".reifu.jsonc")
+	checkPendingPhases(t, s)
+	out, stderr = s.run(model.ExitOK, "run", "--skip-completed", "--stream-json")
+	contains(t, stderr, "実行するフェーズがない")
+	events = parseRunEvents(t, out)
+	if len(events) != 2 || events[0].Type != model.EventRunStarted || events[1].Type != model.EventRunCompleted ||
+		events[1].State == nil || events[1].RunID == end.RunID || events[1].State.Summary().Status != model.PhaseCompleted {
+		t.Fatalf("unexpected all-complete run: %s", out)
+	}
+	out, _ = s.run(model.ExitOK, "logs", "--json")
+	var saved model.RunState
+	parseCLIJSON(t, out, &saved)
+	if saved.RunID != events[1].RunID || saved.Phases[0].Name != "01_FIRST" || saved.Phases[0].File != "prompts/phases/01_FIRST.md" {
+		t.Fatalf("unexpected saved run: %s", out)
+	}
+	checkCarriedPhase(t, saved.Phases[0], prior.Phases[0])
+	checkPendingPhases(t, s)
+
+	s.remove(".reifu.run.json")
+	checkPendingPhases(t, s, "01_FIRST", "02_second", "03_third", "04_fourth", "05_fifth")
+	s.write(".reifu.run.json", "{broken\n")
+	checkPendingPhases(t, s, "01_FIRST", "02_second", "03_third", "04_fourth", "05_fifth")
+	out, stderr = s.run(model.ExitOK, "run", "--skip-completed", "--dry-run", "--json", "--implementer", "codex", "--no-review")
+	contains(t, stderr, "warning: could not read .reifu.run.json")
+	parseCLIJSON(t, out, &plan)
+	if plan.State.Summary().Completed != 0 || plan.State.Summary().Total != 5 {
+		t.Fatalf("corrupt checkpoint did not fall back to all phases: %s", out)
+	}
+}
+
+func TestRunSkipCompletedRestartsFailedPhaseCLI(t *testing.T) {
+	s := phaseCLI(t)
+	t.Setenv("REIFU_CLI_TEST_FAIL_REVIEW", "02_second")
+	out, _ := s.run(model.ExitDrift, "run", "--json")
+	var stopped model.RunState
+	parseCLIJSON(t, out, &stopped)
+	if stopped.Phases[0].Status != model.PhaseCompleted || stopped.Phases[1].Status != model.PhaseFailed ||
+		stopped.Phases[1].ResumeStep != "review" {
+		t.Fatalf("unexpected stopped run: %s", out)
+	}
+	checkPendingPhases(t, s, "02_second")
+
+	t.Setenv("REIFU_CLI_TEST_FAIL_REVIEW", "")
+	out, _ = s.run(model.ExitOK, "run", "--skip-completed", "--allow-dirty", "--stream-json")
+	events := parseRunEvents(t, out)
+	var started []model.RunEvent
+	for _, event := range events {
+		if event.Type == model.EventPhaseStarted {
+			started = append(started, event)
+		}
+	}
+	if len(started) != 1 || started[0].Phase != "02_second" || started[0].Step != "implement" {
+		t.Fatalf("unexpected phase restart: %+v", started)
+	}
+	begin := events[0].State
+	if begin == nil || begin.Phases[1].Status != model.PhasePending || begin.Phases[1].ImplementCommit != "" ||
+		begin.Phases[1].ImplementLog == stopped.Phases[1].ImplementLog {
+		t.Fatalf("failed phase was not reset: %s", out)
+	}
+	checkCarriedPhase(t, begin.Phases[0], stopped.Phases[0])
+	checkPendingPhases(t, s)
+}
+
 func TestPhaseCLIGuards(t *testing.T) {
 	s := phaseCLI(t)
 	s.write(".reifu.jsonc", "{\"version\":1,\"project\":{\"preset\":\"minimal\"}}\n")
@@ -457,6 +639,9 @@ func TestPhaseCLIGuards(t *testing.T) {
 		{"--phase", "01_first", "--from", "02_second"},
 		{"--resume", "--phase", "01_first"},
 		{"--resume", "--from", "01_first"},
+		{"--skip-completed", "--phase", "01_first"},
+		{"--skip-completed", "--from", "02_second"},
+		{"--skip-completed", "--resume"},
 	} {
 		_, stderr := s.run(1, append([]string{"run", "--dry-run", "--implementer", "agy"}, args...)...)
 		contains(t, stderr, "mutually exclusive")
