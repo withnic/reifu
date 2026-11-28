@@ -545,6 +545,7 @@ func TestRunNotifications(t *testing.T) {
 		name         string
 		mode         model.NotifyMode
 		agentMode    string
+		phase        string
 		dryRun       bool
 		wantMessages []string
 		wantFailure  bool
@@ -555,6 +556,7 @@ func TestRunNotifications(t *testing.T) {
 		{name: "blocked", mode: model.NotifyEnd, agentMode: "block", wantMessages: []string{"blocked at 01_alpha (0/2 completed)"}, wantFailure: true},
 		{name: "timeout", mode: model.NotifyEnd, agentMode: "timeout", wantMessages: []string{"timed out at 01_alpha (0/2 completed)"}, wantFailure: true},
 		{name: "phase", mode: model.NotifyPhase, wantMessages: []string{"completed 01_alpha (1/2)", "completed (2/2)"}},
+		{name: "phase-single", mode: model.NotifyPhase, phase: "01_alpha", wantMessages: []string{"completed (1/1)"}},
 		{name: "dry-run", mode: model.NotifyPhase, dryRun: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -566,6 +568,7 @@ func TestRunNotifications(t *testing.T) {
 			opts.Config.Project.Name = "notification project"
 			opts.Config.Runner.Notify = tc.mode
 			opts.DryRun = tc.dryRun
+			opts.Phase = tc.phase
 			var got []sysenv.Notification
 			opts.Notifier = func(n sysenv.Notification) { got = append(got, n) }
 			_, err := Run(context.Background(), opts)

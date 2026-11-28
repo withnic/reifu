@@ -4,12 +4,19 @@ package sysenv
 
 import (
 	"io"
+	"os"
 	"syscall"
 )
 
+const enableVirtualTerminalProcessing = 0x0004
+
+var (
+	messageBeep    = syscall.NewLazyDLL("user32.dll").NewProc("MessageBeep")
+	setConsoleMode = syscall.NewLazyDLL("kernel32.dll").NewProc("SetConsoleMode")
+)
+
 func notifyPlatform(n Notification, tty io.Writer) {
-	beep := syscall.NewLazyDLL("user32.dll").NewProc("MessageBeep")
-	if beep.Find() == nil {
+	if messageBeep.Find() == nil {
 		const (
 			mbIconHand     = 0x10
 			mbIconAsterisk = 0x40
@@ -18,9 +25,29 @@ func notifyPlatform(n Notification, tty io.Writer) {
 		if n.Success {
 			sound = mbIconAsterisk
 		}
-		_, _, _ = beep.Call(sound)
+		_, _, _ = messageBeep.Call(sound)
 	}
 	if isTerminal(tty) {
-		_, _ = io.WriteString(tty, "\x1b]9;"+n.Title+": "+n.Message+"\a")
+		writeOSC9(tty.(*os.File), n.Title+": "+n.Message)
 	}
+}
+
+// writeOSC9 writes an OSC 9 notification only when the console interprets
+// virtual terminal sequences, so legacy consoles never print raw escapes.
+func writeOSC9(f *os.File, text string) {
+	handle := syscall.Handle(f.Fd())
+	var mode uint32
+	if syscall.GetConsoleMode(handle, &mode) != nil {
+		return
+	}
+	if mode&enableVirtualTerminalProcessing == 0 {
+		if setConsoleMode.Find() != nil {
+			return
+		}
+		if r, _, _ := setConsoleMode.Call(uintptr(handle), uintptr(mode|enableVirtualTerminalProcessing)); r == 0 {
+			return
+		}
+		defer func() { _, _, _ = setConsoleMode.Call(uintptr(handle), uintptr(mode)) }()
+	}
+	_, _ = io.WriteString(f, "\x1b]9;"+text+"\a")
 }
