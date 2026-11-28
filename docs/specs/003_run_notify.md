@@ -84,9 +84,9 @@
 
 ## 4. 受け入れ基準チェックリスト
 
-- [ ] `internal/model` に `NotifyMode`（`off` / `end` / `phase`）、`RunnerConfig.Notify`、`RunState.Notify` とバリデーションが追加され、既存 `.reifu.jsonc` と 100% 後方互換である
-- [ ] `internal/sysenv` にクロスプラットフォーム通知（Windows `MessageBeep` + OSC 9、macOS `osascript` + ベル、Linux `notify-send` + ベル）と制御文字サニタイズ、`CI`/`REIFU_NO_NOTIFY` 抑止が実装されている
-- [ ] `internal/runner` が `end` / `phase` / `off` に応じて通知を発火し、`--dry-run` では発火せず、最終フェーズで二重通知しないことがテストで検証されている
-- [ ] `internal/app/run_cmd.go` が `--notify` / `--notify=phase` / `--notify=end` / `--notify=off` を受け付け、`--json` 併用時も `stdout` を汚染しないことが E2E テストで検証されている
-- [ ] `README.md`、`HOWTO.md`、`docs/design/02_data_modeling.md`、`docs/design/03_architecture.md` に `--notify` / `runner.notify` の説明が反映されている
-- [ ] `gofmt -s -w .`、`go vet ./...`、`go test -v ./...`、`CGO_ENABLED=0 go build ./cmd/reifu` がすべて成功する
+- [x] `internal/model` に `NotifyMode`（`off` / `end` / `phase`）、`RunnerConfig.Notify`、`RunState.Notify` とバリデーションが追加され、既存 `.reifu.jsonc` と 100% 後方互換である
+- [x] `internal/sysenv` にクロスプラットフォーム通知（Windows `MessageBeep` + OSC 9、macOS `osascript` + ベル、Linux `notify-send` + ベル）と制御文字サニタイズ、`CI`/`REIFU_NO_NOTIFY` 抑止が実装されている
+- [x] `internal/runner` が `end` / `phase` / `off` に応じて通知を発火し、`--dry-run` では発火せず、最終フェーズで二重通知しないことがテストで検証されている
+- [x] `internal/app/run_cmd.go` が `--notify` / `--notify=phase` / `--notify=end` / `--notify=off` を受け付け、`--json` 併用時も `stdout` を汚染しないことが E2E テストで検証されている
+- [x] `README.md`、`HOWTO.md`、`docs/design/02_data_modeling.md`、`docs/design/03_architecture.md` に `--notify` / `runner.notify` の説明が反映されている
+- [x] `gofmt -s -w .`、`go vet ./...`、`go test -v ./...`、`CGO_ENABLED=0 go build ./cmd/reifu` がすべて成功する

@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/withnic/reifu/internal/model"
+	"github.com/withnic/reifu/internal/sysenv"
 )
 
 func TestHelperAgentProcess(t *testing.T) {
@@ -536,5 +537,105 @@ func TestResumeAfterCommitBeforeCheckpoint(t *testing.T) {
 	}
 	if head := gitOK(t, opts.Root, "rev-parse", "--short", "HEAD"); head != sha {
 		t.Fatalf("resume changed HEAD to %q", head)
+	}
+}
+
+func TestRunNotifications(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		mode         model.NotifyMode
+		agentMode    string
+		dryRun       bool
+		wantMessages []string
+		wantFailure  bool
+	}{
+		{name: "default"},
+		{name: "end", mode: model.NotifyEnd, wantMessages: []string{"completed (2/2)"}},
+		{name: "failure", mode: model.NotifyEnd, agentMode: "fail-review", wantMessages: []string{"failed at 01_alpha (0/2 completed)"}, wantFailure: true},
+		{name: "blocked", mode: model.NotifyEnd, agentMode: "block", wantMessages: []string{"blocked at 01_alpha (0/2 completed)"}, wantFailure: true},
+		{name: "timeout", mode: model.NotifyEnd, agentMode: "timeout", wantMessages: []string{"timed out at 01_alpha (0/2 completed)"}, wantFailure: true},
+		{name: "phase", mode: model.NotifyPhase, wantMessages: []string{"completed 01_alpha (1/2)", "completed (2/2)"}},
+		{name: "dry-run", mode: model.NotifyPhase, dryRun: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			opts, _ := fixture(t, false)
+			t.Setenv("REIFU_HELPER_MODE", tc.agentMode)
+			if tc.agentMode == "timeout" {
+				opts.Timeout = 100 * time.Millisecond
+			}
+			opts.Config.Project.Name = "notification project"
+			opts.Config.Runner.Notify = tc.mode
+			opts.DryRun = tc.dryRun
+			var got []sysenv.Notification
+			opts.Notifier = func(n sysenv.Notification) { got = append(got, n) }
+			_, err := Run(context.Background(), opts)
+			if (err != nil) != tc.wantFailure {
+				t.Fatalf("Run error = %v, want failure %t", err, tc.wantFailure)
+			}
+			var want []sysenv.Notification
+			for _, message := range tc.wantMessages {
+				want = append(want, sysenv.Notification{Title: "reifu run", Message: "notification project: " + message, Success: !tc.wantFailure})
+			}
+			if !reflect.DeepEqual(got, want) {
+				t.Fatalf("notifications = %+v, want %+v", got, want)
+			}
+		})
+	}
+}
+
+func TestResumeNotifications(t *testing.T) {
+	for _, override := range []model.NotifyMode{"", model.NotifyOff} {
+		t.Run(string(override), func(t *testing.T) {
+			opts, _ := fixture(t, false)
+			opts.Notify = model.NotifyPhase
+			opts.Notifier = func(sysenv.Notification) {}
+			t.Setenv("REIFU_HELPER_MODE", "fail-review")
+			result, err := Run(context.Background(), opts)
+			if err == nil || result.State == nil || result.State.Notify != model.NotifyPhase {
+				t.Fatalf("initial run = %+v, %v", result, err)
+			}
+
+			t.Setenv("REIFU_HELPER_MODE", "")
+			opts.Resume, opts.NoCommit = true, false
+			opts.Notify = override
+			opts.Config.Runner.Notify = model.NotifyEnd
+			var got []sysenv.Notification
+			opts.Notifier = func(n sysenv.Notification) { got = append(got, n) }
+			result, err = Run(context.Background(), opts)
+			if err != nil {
+				t.Fatal(err)
+			}
+			mode, wantCount := model.NotifyPhase, 2
+			if override == model.NotifyOff {
+				mode, wantCount = model.NotifyOff, 0
+			}
+			if result.State.Notify != mode || len(got) != wantCount {
+				t.Fatalf("resumed mode = %q, notifications = %+v, want %q and %d notices", result.State.Notify, got, mode, wantCount)
+			}
+			for _, n := range got {
+				if !n.Success {
+					t.Fatalf("unexpected failure notification: %+v", n)
+				}
+			}
+		})
+	}
+}
+
+func TestRunNotificationOnCancellation(t *testing.T) {
+	opts, _ := fixture(t, false)
+	opts.Notify = model.NotifyPhase
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var got []sysenv.Notification
+	opts.Notifier = func(n sysenv.Notification) {
+		got = append(got, n)
+		cancel()
+	}
+	if _, err := Run(ctx, opts); !errors.Is(err, context.Canceled) {
+		t.Fatalf("Run error = %v, want cancellation", err)
+	}
+	if len(got) != 2 || !got[0].Success || got[1].Success ||
+		!strings.Contains(got[1].Message, "canceled at 02_beta (1/2 completed)") {
+		t.Fatalf("unexpected notifications: %+v", got)
 	}
 }

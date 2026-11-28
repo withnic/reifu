@@ -99,6 +99,8 @@ reifu sync
 | `reifu version` | バージョン・コミットハッシュ・ビルド情報を表示（`--json`、`-v` / `--version` 対応） |
 | `reifu help [cmd]` | 全体またはサブコマンド別のヘルプを表示 |
 
+`reifu run --notify` は完了・停止時に通知します。`reifu run --notify=phase` では途中のフェーズ完了時にも通知します。プロジェクトの既定値は `.reifu.jsonc` の `runner.notify`（`off` / `end` / `phase`）で設定できます。未設定時は `off` です。
+
 ---
 
 ## ドキュメント

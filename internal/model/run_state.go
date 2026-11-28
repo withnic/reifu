@@ -7,10 +7,28 @@ import (
 	"unicode"
 )
 
+type NotifyMode string
+
+const (
+	NotifyOff   NotifyMode = "off"
+	NotifyEnd   NotifyMode = "end"
+	NotifyPhase NotifyMode = "phase"
+)
+
+func (m NotifyMode) Validate() error {
+	switch m {
+	case "", NotifyOff, NotifyEnd, NotifyPhase:
+		return nil
+	default:
+		return invalid("runner.notify", fmt.Errorf("invalid notification mode %q (want off, end or phase)", m))
+	}
+}
+
 type RunnerConfig struct {
 	Implementer string              `json:"implementer,omitempty"`
 	Reviewer    string              `json:"reviewer,omitempty"`
 	Agents      map[string][]string `json:"agents,omitempty"`
+	Notify      NotifyMode          `json:"notify,omitempty"`
 }
 
 func (c RunnerConfig) Validate() error {
@@ -35,7 +53,7 @@ func (c RunnerConfig) Validate() error {
 			}
 		}
 	}
-	return nil
+	return c.Notify.Validate()
 }
 
 func ValidateRunID(id string) error {
@@ -70,6 +88,7 @@ type RunState struct {
 	Reviewer    string           `json:"reviewer"`
 	NoReview    bool             `json:"no_review"`
 	NoCommit    bool             `json:"no_commit"`
+	Notify      NotifyMode       `json:"notify,omitempty"`
 	RunDir      string           `json:"run_dir"`
 	Phases      []PhaseRunRecord `json:"phases"`
 }

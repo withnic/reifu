@@ -10,9 +10,33 @@ import (
 	"syscall"
 
 	"github.com/withnic/reifu/internal/jsonc"
+	"github.com/withnic/reifu/internal/model"
 	"github.com/withnic/reifu/internal/runner"
 	"github.com/withnic/reifu/internal/syncer"
 )
+
+type notifyFlag model.NotifyMode
+
+func (n *notifyFlag) IsBoolFlag() bool { return true }
+
+func (n *notifyFlag) String() string { return string(*n) }
+
+func (n *notifyFlag) Set(value string) error {
+	switch value {
+	case "true":
+		value = string(model.NotifyEnd)
+	case "false":
+		value = string(model.NotifyOff)
+	case "":
+		return fmt.Errorf("notification mode must be off, end or phase")
+	}
+	mode := model.NotifyMode(value)
+	if err := mode.Validate(); err != nil {
+		return err
+	}
+	*n = notifyFlag(mode)
+	return nil
+}
 
 func (c CLI) runPhases(args []string) error {
 	f := c.flags("run", "[dir]")
@@ -27,6 +51,7 @@ func (c CLI) runPhases(args []string) error {
 	f.BoolVar(&opts.Resume, "resume", false, "resume the latest run from its checkpoint")
 	f.DurationVar(&opts.Timeout, "timeout", runner.DefaultTimeout, "timeout per agent step (0 for unlimited)")
 	f.BoolVar(&opts.DryRun, "dry-run", false, "show the plan without running agents or writing files")
+	f.Var((*notifyFlag)(&opts.Notify), "notify", "notify on completion or stop (off, end, phase; bare flag means end)")
 	asJSON := f.Bool("json", false, "emit the plan or final run state as JSON")
 	root, err := c.projectRoot(f, "run", args)
 	if err != nil {

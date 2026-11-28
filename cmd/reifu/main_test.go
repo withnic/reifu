@@ -956,3 +956,33 @@ func TestSkillsExternalDestination(t *testing.T) {
 		t.Fatal(got)
 	}
 }
+
+func TestRunNotifyCLI(t *testing.T) {
+	t.Setenv("REIFU_NO_NOTIFY", "1")
+	s := phaseCLI(t)
+	for _, tc := range []struct {
+		flag string
+		mode model.NotifyMode
+	}{
+		{"--notify", model.NotifyEnd},
+		{"--notify=end", model.NotifyEnd},
+		{"--notify=true", model.NotifyEnd},
+		{"--notify=off", model.NotifyOff},
+		{"--notify=false", model.NotifyOff},
+	} {
+		out, stderr := s.run(0, "run", tc.flag, "--dry-run", "--json")
+		var plan runner.Plan
+		parseCLIJSON(t, out, &plan)
+		if plan.State.Notify != tc.mode || stderr != "" {
+			t.Fatalf("%s: notify = %q, want %q, stderr = %q", tc.flag, plan.State.Notify, tc.mode, stderr)
+		}
+	}
+	out, _ := s.run(0, "run", "--notify=phase", "--phase", "01_first", "--no-review", "--no-commit", "--json")
+	var state model.RunState
+	parseCLIJSON(t, out, &state)
+	if state.Notify != model.NotifyPhase || state.Summary().Status != model.PhaseCompleted {
+		t.Fatalf("unexpected state: %+v", state)
+	}
+	_, stderr := s.run(1, "run", "--notify=invalid")
+	contains(t, stderr, "invalid notification mode")
+}

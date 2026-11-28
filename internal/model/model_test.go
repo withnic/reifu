@@ -215,3 +215,14 @@ func TestRunnerConfigAndRunID(t *testing.T) {
 		}
 	}
 }
+
+func TestRunnerConfigNotify(t *testing.T) {
+	for _, mode := range []NotifyMode{"", NotifyOff, NotifyEnd, NotifyPhase, "invalid"} {
+		t.Run(string(mode), func(t *testing.T) {
+			err := (RunnerConfig{Notify: mode}).Validate()
+			if (err != nil) != (mode == "invalid") {
+				t.Fatalf("Validate(%q) = %v", mode, err)
+			}
+		})
+	}
+}

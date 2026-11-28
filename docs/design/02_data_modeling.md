@@ -105,6 +105,8 @@
 }
 ```
 
+`runner.notify` は省略、空文字列、`off`、`end`、`phase` を受け付ける。解決順は `--notify`、`--resume` 時の保存値、`runner.notify`、既定の `off`。解決値を `.reifu.run.json` とラン履歴の `run.json` に `notify` として保存する。旧ランの状態にこのキーがなければ設定ファイルへフォールバックする。
+
 ## **2.3 Go データ型定義（`internal/model`）**
 
 ```go

@@ -284,6 +284,7 @@ reifu run --implementer agy --reviewer gemini
 "runner": {
   "implementer": "codex",
   "reviewer": "claude",
+  "notify": "end",
   "agents": {
     "claude": ["claude", "-p", "--model", "sonnet"]
   }
@@ -291,6 +292,8 @@ reifu run --implementer agy --reviewer gemini
 ```
 
 `--phase 01_foundation` で 1 件、`--from 01_foundation` でそのフェーズ以降を選べます。実装・レビュー各ステップの制限時間は既定で 30 分です。`--timeout 0` で無制限になります。`--no-review` でレビューを、`--no-commit` で自動コミットを省略できます。
+
+`reifu run --notify`（`--notify=end`）はランの完了・停止時に通知します。`reifu run --notify=phase` は途中のフェーズ完了時にも通知します。最終フェーズの完了はランの終了通知に含まれます。`--notify=off` で無効化できます。CLI で指定しなければ、再開時は保存値、新規ランまたは保存値のない再開では `.reifu.jsonc` の `runner.notify` を使います。未設定時や `--dry-run`、環境変数 `CI` または `REIFU_NO_NOTIFY` が非空の場合は通知しません。
 
 異常終了、タイムアウト、Ctrl+C、`BLOCKED_REPORT.md` 検出時は実行を停止します。状態とログを確認し、停止原因を解消して `reifu run --resume` で中断したステップから続けます。`BLOCKED_REPORT.md` がある場合は内容を確認し、解消後に取り除きます。再開時は保存済みのレビュー・コミット設定が使われます。
 

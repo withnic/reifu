@@ -16,6 +16,7 @@ import (
 
 	"github.com/withnic/reifu/internal/fsx"
 	"github.com/withnic/reifu/internal/model"
+	"github.com/withnic/reifu/internal/sysenv"
 )
 
 const (
@@ -39,6 +40,8 @@ type Options struct {
 	Resume, NoReview, NoCommit, AllowDirty, DryRun bool
 	Timeout, HeartbeatInterval                     time.Duration
 	Progress                                       io.Writer
+	Notify                                         model.NotifyMode
+	Notifier                                       func(sysenv.Notification)
 }
 
 type Plan struct {
@@ -235,6 +238,10 @@ func (e *execution) prepare() error {
 			}
 		}
 	}
+	e.run.Notify = model.NotifyMode(firstSet(string(e.Notify), string(e.run.Notify), string(e.Config.Runner.Notify), string(model.NotifyOff)))
+	if err := e.run.Notify.Validate(); err != nil {
+		return err
+	}
 	e.run.Implementer = firstSet(e.Implementer, e.run.Implementer, e.Config.Runner.Implementer)
 	if e.run.Implementer == "" {
 		return fmt.Errorf("missing implementer agent; specify --implementer or set runner.implementer in .reifu.jsonc")
@@ -345,7 +352,31 @@ func (e *execution) save() error {
 	return fsx.WriteFileAtomic(e.Root, e.run.RunDir+"/run.json", data)
 }
 
-func (e *execution) execute(ctx context.Context) error {
+func (e *execution) execute(ctx context.Context) (runErr error) {
+	project := firstSet(e.Config.Project.Name, filepath.Base(e.Root))
+	var phaseName string
+	if e.run.Notify == model.NotifyEnd || e.run.Notify == model.NotifyPhase {
+		defer func() {
+			summary := e.run.Summary()
+			if runErr == nil {
+				e.notify(fmt.Sprintf("%s: completed (%d/%d)", project, summary.Completed, summary.Total), true)
+				return
+			}
+			status := "failed"
+			switch {
+			case summary.Status == model.PhaseBlocked:
+				status = "blocked"
+			case errors.Is(runErr, context.DeadlineExceeded):
+				status = "timed out"
+			case errors.Is(runErr, context.Canceled):
+				status = "canceled"
+			}
+			if phaseName != "" {
+				status += " at " + phaseName
+			}
+			e.notify(fmt.Sprintf("%s: %s (%d/%d completed)", project, status, summary.Completed, summary.Total), false)
+		}()
+	}
 	if err := fsx.EnsureDirWithinRoot(e.Root, e.run.RunDir); err != nil {
 		return err
 	}
@@ -357,12 +388,28 @@ func (e *execution) execute(ctx context.Context) error {
 		if phase.Status == model.PhaseCompleted {
 			continue
 		}
+		phaseName = phase.Name
 		if err := e.executePhase(ctx, i, phase); err != nil {
 			return err
 		}
 		e.summary()
+		if e.run.Notify == model.NotifyPhase {
+			summary := e.run.Summary()
+			if summary.Completed < summary.Total {
+				e.notify(fmt.Sprintf("%s: completed %s (%d/%d)", project, phaseName, summary.Completed, summary.Total), true)
+			}
+		}
 	}
 	return nil
+}
+
+func (e *execution) notify(message string, success bool) {
+	n := sysenv.Notification{Title: "reifu run", Message: message, Success: success}
+	if e.Notifier != nil {
+		e.Notifier(n)
+		return
+	}
+	sysenv.Notify(n, e.Progress)
 }
 
 func (e *execution) summary() {
