@@ -12,6 +12,7 @@
 - **薄いグローバル・自己完結型ローカル**: `~/.claude/` 等のグローバル設定を一切書き換えず（ホームディレクトリ直下での実行も無条件で拒否）、プロジェクトローカルで完結。
 - **非破壊 3-way マージ＆ドリフト検知**: 外部ツールで追記された許可ルールを検知し、危険コマンドガード付きで `reifu sync --import` による逆取り込み・横展開が可能。
 - **クロスプラットフォーム検証フック（`reifu hook verify`）**: Windows（PowerShell / cmd / Git Bash）・WSL2・macOS・Linux で同一動作し、`stop_hook_active` 無限ループ防止と未初期化スキップを内蔵。
+- **マルチエージェント自動フェーズ実行（`reifu run` / `reifu logs`）**: `claude` / `codex` / `gemini` / `agy`（Antigravity）から実装担当とレビュー担当を指定し、全フェーズの「実装 → コミット → レビュー＆修正 → コミット」を一気に自動完走（中断再開・レビュー履歴の読み取り専用閲覧対応）。
 - **ゼロ外部依存・シングルバイナリ**: Go 1.23+ 標準ライブラリのみ（`CGO_ENABLED=0` ビルド対応）。
 - **JSONC 1 ファイルでプリセット拡張**: Rust / Electron / C++ 等の新しいスタックも Go コード変更なしで追加可能。
 
@@ -48,19 +49,36 @@ reifu help
 
 ## クイックスタート
 
+プロジェクト作成から設計・全フェーズの自動実装＆レビュー完了まで、次の流れで完結できます。
+
 ```sh
-# 1. 新規プロジェクトを作成（内蔵プリセット: minimal / go-cli / ts-web / ts-electron / rust-cli）
+# 1. 新規プロジェクトを作成して Git 初期化（内蔵プリセット: minimal / go-cli / ts-web / ts-electron / rust-cli）
 reifu new my-app --preset go-cli
 cd my-app && git init
 
-# 2. 生成された prompts/phase0.md を AI エージェントへ渡して設計・実装フェーズを生成
-#    （以降の機能追加は prompts/add_feature.md、各フェーズ後は prompts/review.md を利用）
+# 2. 生成された prompts/phase0.md を AI エージェントへ渡して設計書と prompts/phases/01_*.md〜 を作成
+#    設計・フェーズが揃ったらコミット
+git add -A && git commit -m "docs: add design and phases"
 
-# 3. .reifu.jsonc を編集したら各エージェント設定へ反映
+# 3. 実装担当とレビュー担当を指定し、全フェーズを自動完走（実装 → コミット → レビュー＆修正 → コミット）
+#    対応エージェント: claude / codex / gemini / agy（antigravity）
+#    ※ --reviewer は省略可（省略時は --implementer と同一エージェントの新規セッションでレビュー、--no-review で省略可）
+reifu run --implementer claude                        # 1 ツールだけで実装＋別セッションレビュー
+reifu run --implementer codex --reviewer claude       # 異種ツールでのクロスレビューも可能
+
+# 4. 進捗やレビュー結果を読み取り専用コマンドで確認（別ターミナルからの追従も可）
+reifu logs             # 各フェーズの進捗とコミット一覧
+reifu logs --review    # レビュアーの指摘・修正内容を確認
+reifu logs -f          # 実行中の実装ログを追従表示
+
+# 5. 途中停止した場合は原因解消後に中断ステップから再開
+reifu run --resume --allow-dirty
+
+# 6. .reifu.jsonc を編集したら各エージェント設定へ反映（以降の機能追加は prompts/add_feature.md から同じ流れ）
 reifu sync
 ```
 
-既存リポジトリへの導入（`reifu init`）、仕様書取り込み（`--spec`）、ドリフト逆取り込み（`reifu sync --import`）、`git clone` 後のリンク修復（`reifu link --force`）、カスタムプリセット作成は **[HOWTO.md](HOWTO.md)** を参照してください。
+既存リポジトリへの導入（`reifu init`）、仕様書取り込み（`--spec`）、ドリフト逆取り込み（`reifu sync --import`）、`git clone` 後のリンク修復（`reifu link --force`）、`reifu run` / `reifu logs` の詳細、カスタムプリセット作成は **[HOWTO.md](HOWTO.md)** を参照してください。
 
 ---
 

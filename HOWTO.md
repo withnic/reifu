@@ -45,8 +45,8 @@ my-app/
 その後、好きな AI エージェントに `prompts/phase0.md` を渡して以下を進めます：
 1. 対話による要件整理と `docs/design/01〜03`・`docs/specs/001_initial_mvp.md` の作成
 2. 規模に応じた最適なフェーズ数（`prompts/phases/01_*.md` 〜 `NN_*.md`）の協議・生成
-3. 人間が `prompts/README.md` のコマンドで **実装 → テスト通過 → `prompts/review.md` でレビュー＆知見還元 → 修正 → `git commit`** サイクルを回す（`prompts/phases/*.md` のシェル一括連続実行も可能）
-4. MVP 完了後の機能追加は **`prompts/add_feature.md`** から同じサイクルで継続
+3. 設計・フェーズファイルをコミット後、**`reifu run --implementer codex --reviewer claude`** で全フェーズの **実装 → コミット → `prompts/review.md` でレビュー＆修正 → コミット** を最後まで一気に自動実行（進捗・レビュー内容は **`reifu logs` / `reifu logs --review` / `reifu logs -f`** で確認。詳細は「[6. フェーズの自動実行とログ閲覧](#6-フェーズの自動実行とログ閲覧reifu-run--reifu-logs)」参照）
+4. MVP 完了後の機能追加は **`prompts/add_feature.md`** で追加フェーズを作成し、同じ `reifu run` サイクルで継続
 
 ### パターン B: 自前の仕様書ファイルから始める（`--spec`）
 
@@ -87,6 +87,34 @@ reifu init --preset ts-web
 ---
 
 ## 2. 日常開発と設定ドリフト運用
+
+### 機能を追加・仕様変更する（`prompts/add_feature.md` → `reifu run`）
+
+MVP 完了後に新しい機能を追加したり既存仕様を変更したりする場合は、以下のサイクルで進めます。
+
+1. **対話セッションで仕様とフェーズを作る**
+   好きな AI エージェントに `prompts/add_feature.md` を渡して要件を伝えると、以下が自動生成されます：
+   * 機能仕様書兼チェックリスト `docs/specs/NNN_<feature>.md`
+   * 影響箇所のみの `docs/design/01〜03` 更新
+   * 追加実装フェーズ `prompts/phases/10_<feature>.md`（複数段階の場合は連番）
+2. **設計・仕様・フェーズファイルを先にコミットする**
+   ```sh
+   git add -A && git commit -m "docs(spec): add <feature> spec and phases"
+   ```
+3. **追加したフェーズだけ `reifu run` で自動実装＆レビューする**
+   `prompts/phases/` に過去の完了済みフェーズが残っている場合は、`--phase`（単一）または `--from`（指定フェーズ以降）を付けて追加分だけを実行します（過去の完了済みフェーズを削除してから `reifu run` しても構いません）。
+   ```sh
+   # 追加フェーズが 1 件のとき
+   reifu run --implementer codex --reviewer claude --phase 10_<feature>
+
+   # 追加フェーズが複数（10_〜11_ 等）のとき
+   reifu run --implementer codex --reviewer claude --from 10_<feature>_part1
+   ```
+4. **レビュー内容と仕様チェックリストを確認する**
+   ```sh
+   reifu logs             # 進捗とコミット一覧
+   reifu logs --review    # レビュアーの指摘・修正内容を確認
+   ```
 
 ### 設定を変更して全エージェントへ反映する
 `.reifu.jsonc` を編集してから `reifu sync` を実行します。
@@ -222,11 +250,12 @@ Go コードの変更や再ビルドなしで、JSONC ファイルを 1 個置�
 
 プロジェクトルートの `prompts/phases/` に `01_foundation.md` のような実装プロンプトを置き、指示を `prompts/review.md` に用意します。自動実行では原則 reifu がコミットするため、フェーズプロンプトにコミット指示を書かないでください。エージェント自身がコミットした場合も、ステップ開始時のコミットを基準に差分と SHA を記録します。
 
-実装・レビュー担当は `claude`、`codex`、`gemini`、`agy`（別名 `antigravity`）から指定できます。起動する CLI を事前にインストールしてください。
+実装・レビュー担当は `claude`、`codex`、`gemini`、`agy`（別名 `antigravity`）から指定できます。起動する CLI を事前にインストールしてください。**1 種類のエージェントだけでも利用できます**（`--reviewer` を省略すると `--implementer` と同じエージェントが毎回新規セッションでレビューを実行します。レビュー自体を省く場合は `--no-review` を付けます）。
 
 ```sh
+reifu run --implementer claude                        # 1 ツールのみ（同一ツールの別セッションでレビュー）
 reifu run --implementer codex --reviewer claude --dry-run
-reifu run --implementer codex --reviewer claude
+reifu run --implementer codex --reviewer claude       # 異種ツールでのクロスレビュー
 reifu run --implementer agy --reviewer gemini
 ```
 
