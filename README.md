@@ -64,8 +64,9 @@ git add -A && git commit -m "docs: add design and phases"
 # 3. 実装担当とレビュー担当を指定し、全フェーズを自動完走（実装 → コミット → レビュー＆修正 → コミット）
 #    対応エージェント: claude / codex / gemini / agy（antigravity）
 #    ※ --reviewer は省略可（省略時は --implementer と同一エージェントの新規セッションでレビュー、--no-review で省略可）
-reifu run --implementer claude                        # 1 ツールだけで実装＋別セッションレビュー
-reifu run --implementer codex --reviewer claude       # 異種ツールでのクロスレビューも可能
+#    ※ --notify（完了・停止時）または --notify=phase（フェーズ完了ごと）でサウンド・デスクトップ通知
+reifu run --implementer claude --notify                         # 1 ツールだけで実装＋別セッションレビュー
+reifu run --implementer codex --reviewer claude --notify=phase  # 異種クロスレビュー＋フェーズごとに通知
 
 # 4. 進捗やレビュー結果を読み取り専用コマンドで確認（別ターミナルからの追従も可）
 reifu logs             # 各フェーズの進捗とコミット一覧
