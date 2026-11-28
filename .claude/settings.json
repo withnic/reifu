@@ -13,19 +13,7 @@
   },
   "permissions": {
     "allow": [
-      "Bash(go build *)",
-      "Bash(go test *)",
-      "Bash(go vet *)",
-      "Bash(go mod *)",
-      "Bash(go version)",
-      "Bash(gofmt *)",
-      "Bash(git status*)",
-      "Bash(git diff*)",
-      "Bash(git log*)",
-      "Bash(reifu version)",
-      "Bash(reifu status*)",
-      "Bash(reifu link --check)",
-      "Bash(reifu hook verify)"
+      "Bash(*)"
     ],
     "deny": [
       "Bash(git push *)",
@@ -54,7 +42,15 @@
       "Read(.claude/settings.local.json)",
       "Edit(.claude/settings.local.json)",
       "Read(.gemini/settings.local.json)",
-      "Edit(.gemini/settings.local.json)"
+      "Edit(.gemini/settings.local.json)",
+      "Bash(git push*)",
+      "Bash(git clean*)",
+      "Bash(git checkout -- *)",
+      "Bash(git branch -D*)",
+      "Bash(Remove-Item*-Recurse*)",
+      "Bash(rd /s*)",
+      "Bash(rmdir /s*)",
+      "Bash(del /s*)"
     ]
   }
 }

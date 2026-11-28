@@ -16,24 +16,20 @@
   },
   "tools": {
     "allowed": [
-      "run_shell_command(go build *)",
-      "run_shell_command(go test *)",
-      "run_shell_command(go vet *)",
-      "run_shell_command(go mod *)",
-      "run_shell_command(go version)",
-      "run_shell_command(gofmt *)",
-      "run_shell_command(git status*)",
-      "run_shell_command(git diff*)",
-      "run_shell_command(git log*)",
-      "run_shell_command(reifu version)",
-      "run_shell_command(reifu status*)",
-      "run_shell_command(reifu link --check)",
-      "run_shell_command(reifu hook verify)"
+      "run_shell_command(*)"
     ],
     "exclude": [
       "run_shell_command(git push *)",
       "run_shell_command(git reset --hard*)",
-      "run_shell_command(rm -rf *)"
+      "run_shell_command(rm -rf *)",
+      "run_shell_command(git push*)",
+      "run_shell_command(git clean*)",
+      "run_shell_command(git checkout -- *)",
+      "run_shell_command(git branch -D*)",
+      "run_shell_command(Remove-Item*-Recurse*)",
+      "run_shell_command(rd /s*)",
+      "run_shell_command(rmdir /s*)",
+      "run_shell_command(del /s*)"
     ]
   }
 }

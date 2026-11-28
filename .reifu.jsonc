@@ -17,24 +17,20 @@
   "permissions": {
     // Add project commands here or import additions with reifu sync --import.
     "allow_commands": [
-      "go build *",
-      "go test *",
-      "go vet *",
-      "go mod *",
-      "go version",
-      "gofmt *",
-      "git status*",
-      "git diff*",
-      "git log*",
-      "reifu version",
-      "reifu status*",
-      "reifu link --check",
-      "reifu hook verify"
+      "*"
     ],
     "deny_commands": [
       "git push *",
+      "git push*",
       "git reset --hard*",
-      "rm -rf *"
+      "git clean*",
+      "git checkout -- *",
+      "git branch -D*",
+      "rm -rf *",
+      "Remove-Item*-Recurse*",
+      "rd /s*",
+      "rmdir /s*",
+      "del /s*"
     ],
     "deny_paths": [
       ".env",
