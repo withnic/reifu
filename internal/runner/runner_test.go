@@ -339,10 +339,13 @@ func TestRunEvents(t *testing.T) {
 }
 
 func TestRunFailureEvents(t *testing.T) {
-	for mode, status := range map[string]model.PhaseStatus{"fail-review": model.PhaseFailed, "block": model.PhaseBlocked} {
+	for mode, status := range map[string]model.PhaseStatus{"fail-review": model.PhaseFailed, "block": model.PhaseBlocked, "timeout": model.PhaseFailed} {
 		t.Run(mode, func(t *testing.T) {
 			opts, _ := fixture(t, false)
 			t.Setenv("REIFU_HELPER_MODE", mode)
+			if mode == "timeout" {
+				opts.Timeout = 300 * time.Millisecond
+			}
 			var events []model.RunEvent
 			opts.EventSink = func(event model.RunEvent) { events = append(events, event) }
 			if _, err := Run(context.Background(), opts); err == nil {
@@ -355,6 +358,9 @@ func TestRunFailureEvents(t *testing.T) {
 			if phase.Type != model.EventPhaseFailed || phase.Status != status || phase.Error == "" || phase.PhaseIndex != 1 || phase.PhaseTotal != 2 ||
 				run.Type != model.EventRunFailed || run.Status != status || run.Error == "" || run.State == nil || run.State.Summary().Status != status {
 				t.Fatalf("terminal events: phase=%+v run=%+v", phase, run)
+			}
+			if mode == "timeout" && !strings.Contains(run.Error, context.DeadlineExceeded.Error()) {
+				t.Fatalf("timeout error not reported: %q", run.Error)
 			}
 		})
 	}

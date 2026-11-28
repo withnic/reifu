@@ -278,6 +278,15 @@ func TestRunCancelOnStdinEOFCLI(t *testing.T) {
 	if len(events) < 2 || events[len(events)-2].Type != model.EventPhaseFailed {
 		t.Fatalf("missing phase failure: %s", all.String())
 	}
+	var terminals int
+	for _, event := range events {
+		if event.Type == model.EventRunFailed || event.Type == model.EventRunCompleted {
+			terminals++
+		}
+	}
+	if terminals != 1 {
+		t.Fatalf("expected exactly one terminal event, got %d: %s", terminals, all.String())
+	}
 	last := events[len(events)-1]
 	if last.Type != model.EventRunFailed || last.Status != model.PhaseFailed || last.State == nil {
 		t.Fatalf("terminal event: %+v", last)

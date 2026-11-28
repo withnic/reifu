@@ -93,3 +93,18 @@
 * `docs/specs/004_companion_api.md` の全受け入れ基準チェックリストが `[x]` で満たされていること。
 * ビルド・テスト失敗時は `AGENTS.md` の 3 段階エスカレーション修復ループ（上限 9 回）に従い、解決不能な場合のみ `BLOCKED_REPORT.md` を出力して停止する。テスト改ざん・スキップ・アサーション緩和は厳禁。
 * 完了時は、変更ファイル一覧・テスト結果・残課題（あれば）を簡潔に報告すること。
+
+---
+
+## 5. Phase 6 からの引き継ぎ（ドキュメント反映時に記載すること）
+
+`docs/design/02_data_modeling.md` / `03_architecture.md` / `README.md` へ `--stream-json` を記載する際は、Phase 6 実装の以下の挙動をそのまま正本として書くこと（コード変更は不要）。
+
+* `RunEvent.elapsed_ms` は `omitempty` なしで全イベントに出力される（意味を持つのは `heartbeat` / `step_completed` / `phase_completed` / `phase_failed` のみ。その他は `0`）。他のフィールドは空なら省略される。
+* 終端イベント（`run_plan` / `run_completed` / `run_failed`）は 1 ランにつき必ず 1 行だけ出る。ランナーが終端イベントを出す前にエラー終了した場合だけ、CLI がフォールバックの `run_failed` を出す。フォールバックの `status` は Exit `2`（`BLOCKED_REPORT.md` 存在）なら `blocked`、それ以外は `failed`。
+* `--resume` で `implement_commit` / `review_commit` から再開した場合、そのステップの `step_started` は出ず、`commit` / `step_completed` だけが出る。
+* キャンセル・タイムアウトは `status: "failed"` で、区別は `error` 文字列（`context canceled` / `context deadline exceeded`）で行う。
+* `--stream-json` 時、`--notify` の端末フォールバック出力は `stderr` へ出し、`stdout` には出さない。ランサマリ書き込み失敗などの警告テキストは破棄される（`stdout` に混ぜないため）。
+* `--cancel-on-stdin-eof` は `--dry-run` では無効。ラン開始前に `stdin` がすでに閉じていると、ランは即キャンセルされて `run_failed` になる。`stdin` を読む goroutine はラン完了後も `Read` が返るまで残る（CLI プロセスは終了するので実害はない）。
+* イベント送出のロック順は `agentStream.mu` → `execution.eventMu` で固定している。`stdout` の読み手が止まると、エージェントの出力を書き込む処理もブロックされる（背圧）。
+* **既知の不安定さ（未解決）**: Phase 6 レビュー時、Windows で `go test -race ./...` を実行したところ `TestFollowLog` が 1 回だけ 0.08 秒で失敗した（再実行 8 回では再現しなかった）。原因の候補は、ランナーが `.reifu.state.json` をアトミックに置き換えている最中に `LoadRun` → `loadState` が読むと、Windows では一時的に共有違反やアクセス拒否になり、読む側にはリトライがないこと。`InspectStatus` の `LatestRun` は実行中のランに対して `LoadRun` を呼ぶので、同じ失敗が起こりうる（ベストエフォートなので `nil` になるだけだが、GUI の表示がちらつく）。対応するなら、`fsx` に読み取り用の共有違反リトライを用意して `loadState` から使うこと。
