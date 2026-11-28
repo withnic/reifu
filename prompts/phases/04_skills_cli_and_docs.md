@@ -7,6 +7,13 @@
 * `docs/design/01_project_overview.md` 〜 `03_architecture.md`
 * Phase 3 で実装済みの `internal/model`（`SkillsConfig`, `LinkModeJunction`, `ReifuState.ManagedSkills`, `StatusReport.Skills`）および `internal/fsx`（`DiscoverSkills`, `EnsureDirLink`, `CheckDirLink`, `RemoveDirLink`）
 
+### Phase 3 レビューからの引き継ぎ（必ず守ること）
+* `fsx.RemoveDirLink(root, target, protectedSources...)` は既定の `.agents/skills` しか自動で保護しない。カスタム `skills.source` を使う場合は**必ず** `EffectiveSkillsSource()` を `protectedSources` に渡すこと。
+* `fsx.EnsureDirLink` が重なりを検査するのは「渡されたスキル 1 件のディレクトリ」と宛先だけで、正本ルート（`skills.source` 全体）との重なりは見ない。呼び出し前に宛先 `<target>/<name>` が `skills.source` 配下に解決されないことを `fsx.ValidateDistinctPaths` 等で確認すること（設定側ではターゲット同士の入れ子を `Validate()` で拒否済み）。
+* `CheckDirLink` は、宛先リンクがプロジェクト外を指すとエラーを返す（`DIFFERENT` にはならない）。`status` / `link --check` ではこのエラーで全体を止めず、不整合として報告する扱いを決めて実装すること。
+* 正本スキル内にプロジェクト内を指すシンボリックリンクがあると、`copy` モード（コピー作成・`COPY` 判定）はエラーになる（リンク／ジャンクション方式は動く）。仕様どおりの安全側の挙動なので、エラーメッセージをそのまま利用者へ出すこと。
+* `DiscoverSkills` は、名前に `:` を含むもの・末尾が `.` / 空白のものも無視する（ターゲットのパス要素として使えないため）。
+
 ---
 
 ## 2. 今回の実装タスク

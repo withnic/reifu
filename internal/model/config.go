@@ -311,6 +311,13 @@ func (c ReifuConfig) validateSkills() error {
 		if _, dup := seen[key]; dup {
 			return invalid(field, fmt.Errorf("duplicate skills target %q", target))
 		}
+		// A nested target could be reached through a skill link in its
+		// parent target and write into the source tree.
+		for other := range seen {
+			if strings.HasPrefix(key, other+"/") || strings.HasPrefix(other, key+"/") {
+				return invalid(field, fmt.Errorf("skills target %q is nested with another target", target))
+			}
+		}
 		if key == source || strings.HasPrefix(key, source+"/") || strings.HasPrefix(source, key+"/") {
 			return invalid(field, fmt.Errorf("skills target %q overlaps source %q", target, c.EffectiveSkillsSource()))
 		}

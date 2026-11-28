@@ -30,8 +30,11 @@ func DiscoverSkills(root, sourceDir string) ([]string, error) {
 	seen := make(map[string]string)
 	for _, entry := range entries {
 		name := entry.Name()
-		if strings.HasPrefix(name, ".") || strings.ContainsAny(name, "/\\") ||
-			strings.Contains(name, "..") || strings.ContainsFunc(name, unicode.IsControl) {
+		// Skip names that could not be used as a project-relative target
+		// component, so one odd entry cannot make every later link fail.
+		if strings.HasPrefix(name, ".") || strings.ContainsAny(name, "/\\:") ||
+			strings.Contains(name, "..") || strings.ContainsFunc(name, unicode.IsControl) ||
+			strings.HasSuffix(name, ".") || strings.HasSuffix(name, " ") {
 			continue
 		}
 		dir := filepath.Join(src, name)
@@ -299,9 +302,11 @@ func publishDirLink(staged, dst string, replace bool) (err error) {
 	return removeDirEntry(old)
 }
 
-// RemoveDirLink removes a destination entry. Callers must also guard any
-// configured custom source against overlap before removing managed targets.
-func RemoveDirLink(root, target string) error {
+// RemoveDirLink removes a destination entry: a link or junction is removed
+// without touching its destination, and an ordinary directory is removed
+// recursively. The default skills source and every protectedSources entry
+// (project-relative, e.g. a custom skills.source) must not overlap target.
+func RemoveDirLink(root, target string, protectedSources ...string) error {
 	dst, err := dirLinkDestination(root, target)
 	if err != nil {
 		return err
@@ -310,12 +315,15 @@ func RemoveDirLink(root, target string) error {
 	if err != nil {
 		return err
 	}
-	source := model.ReifuConfig{}.EffectiveSkillsSource()
-	if err := ValidateDistinctPaths([]string{filepath.Join(canonical, filepath.FromSlash(source))}, []string{dst}); err != nil {
-		return err
-	}
-	if resolved, err := dirLinkDestination(canonical, source); err == nil {
-		if err := ValidateDistinctPaths([]string{resolved}, []string{dst}); err != nil {
+	sources := append([]string{model.ReifuConfig{}.EffectiveSkillsSource()}, protectedSources...)
+	for _, source := range sources {
+		guards := []string{filepath.Join(canonical, filepath.FromSlash(source))}
+		// Fully resolve the source as well, so a source reached through an
+		// in-project link is still protected.
+		if resolved, err := withinRoot(canonical, source); err == nil {
+			guards = append(guards, resolved)
+		}
+		if err := ValidateDistinctPaths(guards, []string{dst}); err != nil {
 			return err
 		}
 	}

@@ -249,6 +249,82 @@ func TestDirLinkRejectsEscape(t *testing.T) {
 	requireSkillFile(t, outside, "scripts/run", "external")
 }
 
+func TestDirLinkForceKeepsOtherLinkDestination(t *testing.T) {
+	root := t.TempDir()
+	putSkillFile(t, root, skillSource+"/SKILL.md", "skill")
+	putSkillFile(t, root, "other/SKILL.md", "other")
+	putSkillFile(t, root, "other/scripts/run", "other-script")
+	if err := os.MkdirAll(filepath.Join(root, filepath.Dir(filepath.FromSlash(skillTarget))), 0755); err != nil {
+		t.Fatal(err)
+	}
+	installTestDirLink(t, filepath.Join(root, filepath.FromSlash(skillTarget)), filepath.Join(root, "other"))
+	report, err := CheckDirLink(root, skillSource, skillTarget)
+	if err != nil || report.Status != model.LinkStatusDifferent {
+		t.Fatalf("link to another directory = %+v, %v", report, err)
+	}
+	if _, err := EnsureDirLink(root, skillSource, skillTarget, model.LinkModeAuto, false); !errors.Is(err, os.ErrExist) {
+		t.Fatalf("expected non-destructive collision, got %v", err)
+	}
+	for _, mode := range []model.LinkMode{model.LinkModeCopy, model.LinkModeAuto} {
+		if _, err := EnsureDirLink(root, skillSource, skillTarget, mode, true); err != nil {
+			t.Fatalf("%s force: %v", mode, err)
+		}
+		requireSkillFile(t, root, "other/SKILL.md", "other")
+		requireSkillFile(t, root, "other/scripts/run", "other-script")
+	}
+	requireSkillFile(t, root, skillTarget+"/SKILL.md", "skill")
+}
+
+func TestRemoveDirLinkKeepsSources(t *testing.T) {
+	root := t.TempDir()
+	putSkillFile(t, root, skillSource+"/SKILL.md", "skill")
+	putSkillFile(t, root, skillSource+"/scripts/run", "script")
+	// An ordinary target directory holding a link back into the source:
+	// only the link entry may be removed.
+	putSkillFile(t, root, "stale/readme", "remove")
+	installTestDirLink(t, filepath.Join(root, "stale", "into-source"), filepath.Join(root, filepath.FromSlash(skillSource)))
+	if err := RemoveDirLink(root, "stale"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Lstat(filepath.Join(root, "stale")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("stale target remains: %v", err)
+	}
+	requireSkillFile(t, root, skillSource+"/SKILL.md", "skill")
+	requireSkillFile(t, root, skillSource+"/scripts/run", "script")
+
+	// A custom source is protected when the caller passes it.
+	putSkillFile(t, root, "custom/skills/a/SKILL.md", "custom")
+	for _, target := range []string{"custom/skills/a", "custom", "CUSTOM/skills"} {
+		if err := RemoveDirLink(root, target, "custom/skills"); err == nil {
+			t.Fatalf("removed %q overlapping a protected source", target)
+		}
+	}
+	requireSkillFile(t, root, "custom/skills/a/SKILL.md", "custom")
+
+	// A protected source reached through an in-project link is resolved.
+	installTestDirLink(t, filepath.Join(root, "alias"), filepath.Join(root, "custom"))
+	if err := RemoveDirLink(root, "custom/skills/a", "alias/skills"); err == nil {
+		t.Fatal("removed a directory inside a linked protected source")
+	}
+	requireSkillFile(t, root, "custom/skills/a/SKILL.md", "custom")
+}
+
+func TestDiscoverSkillsSkipsUnusableNames(t *testing.T) {
+	root := t.TempDir()
+	names := []string{"ok", "a..b"}
+	if runtime.GOOS != "windows" {
+		// Windows cannot create these names, so only Unix exercises them.
+		names = append(names, "a:b", "dot.", "space ")
+	}
+	for _, name := range names {
+		putSkillFile(t, root, "skills/"+name+"/SKILL.md", "")
+	}
+	got, err := DiscoverSkills(root, "skills")
+	if err != nil || !reflect.DeepEqual(got, []string{"ok"}) {
+		t.Fatalf("discover: %v, %v", got, err)
+	}
+}
+
 func TestDirLinkBroken(t *testing.T) {
 	root := t.TempDir()
 	mode := model.LinkModeSymlink

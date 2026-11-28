@@ -54,7 +54,7 @@ Claude Code / Codex CLI / Gemini CLI / Antigravity の 4 エージェントは�
 
 #### バリデーションルール（`internal/model`）
 * `skills.source`: 省略時は `.agents/skills`。指定時はプロジェクトルート配下の相対パスのみ許可（絶対パス、`..`、制御文字、Windows 予約名、`.` は拒否）。
-* `skills.targets`: 各要素はプロジェクトルート配下の相対パスのみ許可。`skills.source` 自身、または `skills.source` の親／子孫（包含関係）、重複パス（大文字小文字正規化後）は拒否。
+* `skills.targets`: 各要素はプロジェクトルート配下の相対パスのみ許可。`skills.source` 自身、または `skills.source` の親／子孫（包含関係）、重複パス（大文字小文字正規化後）、他のターゲットとの入れ子（親リンク経由で正本へ書き込めてしまうため）は拒否。
 * `skills.enabled`: `*bool`（未指定は有効扱い）。
 
 ### 3.2 スキル検出ルール
@@ -66,7 +66,7 @@ Claude Code / Codex CLI / Gemini CLI / Antigravity の 4 エージェントは�
   * `fsx.ValidateWithinRoot` でプロジェクト内かつ外部シンボリックリンク脱出がないことを検証する。
   * 直下のエントリをファイル名昇順で走査し、以下を満たすサブディレクトリ `<name>` をスキルとして認識する：
     * 隠しディレクトリ（`.` 始まり）でないこと
-    * パス区切り・制御文字・`..` を含まないこと
+    * パス区切り・制御文字・`..`・`:` を含まず、末尾が `.` / 空白でないこと（ターゲットのパス要素として使えない名前は認識しない）
     * `<source>/<name>` が通常ディレクトリ（シンボリックリンク／ジャンクション脱出でないこと）であり、直下に通常ファイル `SKILL.md` が存在すること
 
 ### 3.3 ディレクトリリンク戦略と状態判定（`internal/fsx`）
@@ -97,6 +97,8 @@ Claude Code / Codex CLI / Gemini CLI / Antigravity の 4 エージェントは�
 * `source` 側および `target` 側の親ディレクトリについて `fsx.ValidateWithinRoot` を必須とし、プロジェクト外へのシンボリックリンク脱出を完全に拒否する。
 * コピー実行時・内容比較時に `source` 内にプロジェクト外を指すシンボリックリンクが含まれていた場合は即エラーで拒否する。
 * 削除（`fsx.RemoveDirLink`）時は必ず `os.Lstat` でリパースポイント／シンボリックリンクを判別し、リンク先ディレクトリの中身を絶対に削除しないこと。
+  * `fsx.RemoveDirLink(root, target, protectedSources...)` は既定の `.agents/skills` を常に保護する。カスタム `skills.source` を使う場合、呼び出し側は必ずそれを `protectedSources` に渡すこと（リンク経由の別名も解決して保護される）。
+* Windows では種類を問わずリパースポイント全般（OneDrive のクラウドファイル等を含む）をリンク扱いし、追従・コピーしない（安全側に倒す）。
 
 ### 3.4 管理済みスキル追跡とクリーンアップ
 * `.reifu.state.json`（`model.ReifuState`）に `ManagedSkills map[string][]string \`json:"managed_skills,omitempty"\``（キー: ターゲットディレクトリ例 `".claude/skills"`、値: 管理済みスキル名一覧）を追加する。
@@ -121,11 +123,11 @@ Claude Code / Codex CLI / Gemini CLI / Antigravity の 4 エージェントは�
 ## 4. 受け入れ基準チェックリスト
 
 ### モデル・ファイルシステム基盤（`internal/model`, `internal/fsx`）
-- [ ] `internal/model` に `SkillsConfig`（`enabled` / `source` / `targets`）、`LinkModeJunction`、`ReifuState.ManagedSkills`、`StatusReport.Skills` が追加され、既存 `.reifu.jsonc` / `.reifu.state.json` と 100% 後方互換である
-- [ ] `SkillsConfig.Validate()` がパストラバーサル・絶対パス・包含関係（source と target の重複/入れ子）・制御文字を拒否する
-- [ ] `internal/fsx` に `EnsureDirLink` / `CheckDirLink` / `RemoveDirLink` が実装され、Unix は相対シンボリックリンク→コピー、Windows は相対シンボリックリンク→管理者不要ジャンクション→コピーで動作する
-- [ ] `RemoveDirLink` と `--force` 置換がリンク／ジャンクション削除時に正本ディレクトリ本体を絶対に削除しないことがテストで検証されている
-- [ ] `EnsureDirLink` / `CheckDirLink` がプロジェクト外シンボリックリンク脱出を拒否することがテストで検証されている
+- [x] `internal/model` に `SkillsConfig`（`enabled` / `source` / `targets`）、`LinkModeJunction`、`ReifuState.ManagedSkills`、`StatusReport.Skills` が追加され、既存 `.reifu.jsonc` / `.reifu.state.json` と 100% 後方互換である
+- [x] `SkillsConfig.Validate()` がパストラバーサル・絶対パス・包含関係（source と target の重複/入れ子）・制御文字を拒否する
+- [x] `internal/fsx` に `EnsureDirLink` / `CheckDirLink` / `RemoveDirLink` が実装され、Unix は相対シンボリックリンク→コピー、Windows は相対シンボリックリンク→管理者不要ジャンクション→コピーで動作する
+- [x] `RemoveDirLink` と `--force` 置換がリンク／ジャンクション削除時に正本ディレクトリ本体を絶対に削除しないことがテストで検証されている
+- [x] `EnsureDirLink` / `CheckDirLink` がプロジェクト外シンボリックリンク脱出を拒否することがテストで検証されている
 
 ### コマンド統合・同期・ドキュメント（`internal/syncer`, `internal/app`, `cmd/reifu`）
 - [ ] `.agents/skills/` が存在しないプロジェクトでは `reifu new` / `init` / `link` / `sync` / `status` の挙動・出力が従来と変わらない（不要な空フォルダを作らない）

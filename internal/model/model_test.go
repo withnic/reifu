@@ -117,6 +117,7 @@ func TestSkillsValidation(t *testing.T) {
 	}
 	for _, targets := range [][]string{
 		{".AGENTS\\skills"}, {".agents"}, {".agents/skills/sub"}, {"out/skills", "./OUT\\skills"},
+		{".claude/skills", ".claude/skills/nested"}, {"out/a/b", "OUT/a"},
 	} {
 		config := base
 		config.Skills.Targets = targets
