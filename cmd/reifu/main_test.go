@@ -78,6 +78,12 @@ func TestPhaseAgentProcess(t *testing.T) {
 	if os.Getenv("REIFU_CLI_TEST_AGENT") != "1" {
 		return
 	}
+	if os.Getenv("REIFU_CLI_TEST_AGY_DENIED") == "1" {
+		fmt.Fprintln(os.Stdout, `{"event":"init","conversation_id":"cli-1","init":{"cwd":"."}}`)
+		fmt.Fprintln(os.Stdout, `{"event":"step_update","step_update":{"step_index":1,"state":"ERROR","step_type":"tool","tool_name":"run_command","tool_info":{"name":"run_command","parameters":{"CommandLine":"go test ./..."},"error":{"type":"TOOL_ERROR","message":"permission check failed for unsandboxed \"go test ./...\": user denied permission to run command:\ngo test ./..."}}}}`)
+		fmt.Fprintln(os.Stdout, `{"event":"result","result":{"conversation_id":"cli-1","status":"SUCCESS","response":"","num_turns":1,"denied_actions":[{"action":"command","display_name":"Bash"}]}}`)
+		os.Exit(0)
+	}
 	prompt, err := io.ReadAll(os.Stdin)
 	if err != nil {
 		t.Fatal(err)
@@ -1290,4 +1296,49 @@ func TestRunNotifyCLI(t *testing.T) {
 	}
 	_, stderr := s.run(1, "run", "--notify=invalid")
 	contains(t, stderr, "invalid notification mode")
+}
+
+func TestAgyDeniedCommandsCLI(t *testing.T) {
+	s := phaseCLI(t)
+	t.Setenv("REIFU_CLI_TEST_AGY_DENIED", "1")
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := json.Marshal(model.ReifuConfig{
+		Version: 1,
+		Project: model.ProjectMeta{Preset: "minimal"},
+		Runner: model.RunnerConfig{
+			Implementer: "agy",
+			Agents: map[string][]string{
+				"agy": {exe, "-test.run=^TestPhaseAgentProcess$", "--", "implement", "--output-format", "stream-json", "--print={prompt}"},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.write(".reifu.jsonc", string(cfg)+"\n")
+	s.git("add", ".reifu.jsonc")
+	s.git("commit", "-qm", "configure agy mock")
+
+	stdout, stderr := s.run(model.ExitDrift, "run", "--phase", "01_first", "--no-review", "--stream-json")
+	contains(t, stderr, "go test ./...")
+	contains(t, stderr, "permissions.allow_commands")
+	events := parseRunEvents(t, stdout)
+	last := events[len(events)-1]
+	if last.Type != model.EventRunFailed || !slices.Equal(last.DeniedCommands, []string{"go test ./..."}) {
+		t.Fatalf("run_failed event = %+v", last)
+	}
+
+	logsOut, _ := s.run(model.ExitOK, "logs")
+	contains(t, logsOut, "Denied commands")
+	contains(t, logsOut, `"go test ./..."`)
+
+	logsJSON, _ := s.run(model.ExitOK, "logs", "--json")
+	var state model.RunState
+	parseCLIJSON(t, logsJSON, &state)
+	if len(state.Phases) != 1 || state.Phases[0].CommandsLog == "" || !slices.Equal(state.Phases[0].DeniedCommands, []string{"go test ./..."}) {
+		t.Fatalf("logs --json state = %+v", state)
+	}
 }

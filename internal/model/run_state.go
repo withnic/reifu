@@ -127,25 +127,50 @@ const (
 	EventRunFailed      RunEventType = "run_failed"
 )
 
+type CommandStatus string
+
+const (
+	CommandAllowed CommandStatus = "allowed"
+	CommandDenied  CommandStatus = "denied"
+	CommandError   CommandStatus = "error"
+)
+
+type CommandRecord struct {
+	Step     string        `json:"step"`
+	Agent    string        `json:"agent"`
+	Tool     string        `json:"tool"`
+	Command  string        `json:"command,omitempty"`
+	Status   CommandStatus `json:"status"`
+	DeniedBy string        `json:"denied_by,omitempty"`
+	Error    string        `json:"error,omitempty"`
+}
+
+type PhaseCommandsLog struct {
+	Version  int             `json:"version"`
+	Phase    string          `json:"phase"`
+	Commands []CommandRecord `json:"commands"`
+}
+
 type RunEvent struct {
-	SchemaVersion int          `json:"schema_version"`
-	Type          RunEventType `json:"type"`
-	Timestamp     time.Time    `json:"timestamp"`
-	RunID         string       `json:"run_id,omitempty"`
-	Phase         string       `json:"phase,omitempty"`
-	PhaseIndex    int          `json:"phase_index,omitempty"`
-	PhaseTotal    int          `json:"phase_total,omitempty"`
-	Step          string       `json:"step,omitempty"`
-	Agent         string       `json:"agent,omitempty"`
-	Commit        string       `json:"commit,omitempty"`
-	Path          string       `json:"path,omitempty"`
-	Text          string       `json:"text,omitempty"`
-	ElapsedMS     int64        `json:"elapsed_ms"`
-	Status        PhaseStatus  `json:"status,omitempty"`
-	Error         string       `json:"error,omitempty"`
-	Warning       string       `json:"warning,omitempty"`
-	Plan          *RunPlan     `json:"plan,omitempty"`
-	State         *RunState    `json:"state,omitempty"`
+	SchemaVersion  int          `json:"schema_version"`
+	Type           RunEventType `json:"type"`
+	Timestamp      time.Time    `json:"timestamp"`
+	RunID          string       `json:"run_id,omitempty"`
+	Phase          string       `json:"phase,omitempty"`
+	PhaseIndex     int          `json:"phase_index,omitempty"`
+	PhaseTotal     int          `json:"phase_total,omitempty"`
+	Step           string       `json:"step,omitempty"`
+	Agent          string       `json:"agent,omitempty"`
+	Commit         string       `json:"commit,omitempty"`
+	Path           string       `json:"path,omitempty"`
+	Text           string       `json:"text,omitempty"`
+	ElapsedMS      int64        `json:"elapsed_ms"`
+	Status         PhaseStatus  `json:"status,omitempty"`
+	Error          string       `json:"error,omitempty"`
+	Warning        string       `json:"warning,omitempty"`
+	DeniedCommands []string     `json:"denied_commands,omitempty"`
+	Plan           *RunPlan     `json:"plan,omitempty"`
+	State          *RunState    `json:"state,omitempty"`
 }
 
 type PhaseRunRecord struct {
@@ -160,6 +185,8 @@ type PhaseRunRecord struct {
 	ReviewCommit    string      `json:"review_commit,omitempty"`
 	ImplementLog    string      `json:"implement_log"`
 	ReviewReport    string      `json:"review_report"`
+	CommandsLog     string      `json:"commands_log,omitempty"`
+	DeniedCommands  []string    `json:"denied_commands,omitempty"`
 	DurationMS      int64       `json:"duration_ms"`
 	ImplementDiff   string      `json:"implement_diff,omitempty"`
 	ResumeStep      string      `json:"resume_step,omitempty"`

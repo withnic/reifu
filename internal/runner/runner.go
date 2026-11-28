@@ -88,6 +88,7 @@ func (e *execution) snapshot() *model.RunState {
 			value := *base
 			state.Phases[i].CommitBase = &value
 		}
+		state.Phases[i].DeniedCommands = slices.Clone(state.Phases[i].DeniedCommands)
 	}
 	return &state
 }
@@ -323,7 +324,7 @@ func (e *execution) prepare() error {
 		}
 	}
 	for _, phase := range e.run.Phases {
-		for _, rel := range []string{phase.File, phase.ImplementLog, phase.ReviewReport} {
+		for _, rel := range []string{phase.File, phase.ImplementLog, phase.ReviewReport, e.run.RunDir + "/" + phase.Name + "_commands.json"} {
 			if _, err := projectPath(e.Root, rel); err != nil {
 				return err
 			}
@@ -453,6 +454,7 @@ func (e *execution) execute(ctx context.Context) (runErr error) {
 				if e.run.Summary().Status == model.PhaseBlocked {
 					event.Status = model.PhaseBlocked
 				}
+				event.DeniedCommands = e.collectDeniedCommands()
 			}
 			e.emit(event)
 		}()
@@ -489,18 +491,49 @@ func (e *execution) notify(message string, success bool) {
 func (e *execution) summary() {
 	var body strings.Builder
 	fmt.Fprintf(&body, "# Run %s\n\n| Phase | Status | Implementation | Review | Duration (ms) | Reports |\n| --- | --- | --- | --- | ---: | --- |\n", e.run.RunID)
+	var deniedLines []string
 	for _, p := range e.run.Phases {
 		review := ""
 		if !e.run.NoReview {
 			review = fmt.Sprintf(" [review](%s)", markdownLink(filepath.Base(p.ReviewReport)))
 		}
-		fmt.Fprintf(&body, "| %s | %s | %s | %s | %d | [log](%s)%s |\n",
+		commands := ""
+		if p.CommandsLog != "" {
+			commands = fmt.Sprintf(" [commands](%s)", markdownLink(filepath.Base(p.CommandsLog)))
+		}
+		fmt.Fprintf(&body, "| %s | %s | %s | %s | %d | [log](%s)%s%s |\n",
 			strings.ReplaceAll(p.Name, "|", "\\|"), p.Status, p.ImplementCommit, p.ReviewCommit, p.DurationMS,
-			markdownLink(filepath.Base(p.ImplementLog)), review)
+			markdownLink(filepath.Base(p.ImplementLog)), review, commands)
+		if len(p.DeniedCommands) > 0 {
+			quoted := make([]string, len(p.DeniedCommands))
+			for i, cmd := range p.DeniedCommands {
+				quoted[i] = fmt.Sprintf("`%s`", strings.ReplaceAll(cmd, "`", "'"))
+			}
+			deniedLines = append(deniedLines, fmt.Sprintf("- %s: %s", p.Name, strings.Join(quoted, ", ")))
+		}
+	}
+	if len(deniedLines) > 0 {
+		body.WriteString("\n## Denied commands\n\n")
+		body.WriteString("Candidates to review for `permissions.allow_commands` in `.reifu.jsonc`:\n\n")
+		for _, line := range deniedLines {
+			body.WriteString(line + "\n")
+		}
 	}
 	if err := fsx.WriteFileAtomic(e.Root, e.run.RunDir+"/summary.md", []byte(body.String())); err != nil {
 		fmt.Fprintf(e.Progress, "warning: write run summary: %v\n", err)
 	}
+}
+
+func (e *execution) collectDeniedCommands() []string {
+	var denied []string
+	for _, p := range e.run.Phases {
+		for _, cmd := range p.DeniedCommands {
+			if !slices.Contains(denied, cmd) {
+				denied = append(denied, cmd)
+			}
+		}
+	}
+	return denied
 }
 
 func (e *execution) fail(i int, phase *model.PhaseRunRecord, err error) error {
@@ -513,6 +546,7 @@ func (e *execution) fail(i int, phase *model.PhaseRunRecord, err error) error {
 	e.summary()
 	event := e.phaseEvent(model.EventPhaseFailed, i, phase)
 	event.Status, event.Error, event.ElapsedMS = phase.Status, phase.Error, phase.DurationMS
+	event.DeniedCommands = slices.Clone(phase.DeniedCommands)
 	e.emit(event)
 	return &model.ExitError{Code: model.ExitDrift, Field: phase.Name, Err: errors.Join(err, saveErr)}
 }

@@ -40,6 +40,63 @@ func TestHelperAgentProcess(t *testing.T) {
 		time.Sleep(10 * time.Second)
 		os.Exit(0)
 	}
+	if os.Getenv("REIFU_HELPER_MODE") == "silent-noop" {
+		if os.Getenv("REIFU_NOOP_TEXT") != "" {
+			fmt.Fprintln(os.Stdout, os.Getenv("REIFU_NOOP_TEXT"))
+		}
+		os.Exit(0)
+	}
+	if os.Getenv("REIFU_HELPER_MODE") == "agy-stream" {
+		role := "implement"
+		for i, arg := range os.Args {
+			if arg == "--" && i+1 < len(os.Args) {
+				role = os.Args[i+1]
+				break
+			}
+		}
+		scenario := os.Getenv("REIFU_AGY_SCENARIO")
+		switch scenario {
+		case "success":
+			put(t, ".", "agy-"+role+".txt", "ok "+role+"\n")
+			fmt.Fprintln(os.Stdout, `{"event":"init","conversation_id":"c1","init":{"cwd":".","permission_mode":"request-review"}}`)
+			fmt.Fprintln(os.Stdout, `{"event":"step_update","step_update":{"step_index":1,"state":"ACTIVE","step_type":"tool","tool_name":"run_command","tool_info":{"name":"run_command","parameters":{"CommandLine":"go test ./..."}}}}`)
+			fmt.Fprintln(os.Stdout, `{"event":"step_update","step_update":{"step_index":1,"state":"DONE","step_type":"tool","tool_name":"run_command","tool_info":{"name":"run_command","parameters":{"CommandLine":"go test ./..."},"output":"PASS\n"}}}`)
+			fmt.Fprintln(os.Stdout, `{"event":"step_update","step_update":{"step_index":2,"state":"ACTIVE","step_type":"agent_response","text_delta":"Completed "}}`)
+			fmt.Fprintln(os.Stdout, `{"event":"step_update","step_update":{"step_index":2,"state":"DONE","step_type":"agent_response","text_delta":"`+role+`.\n"}}`)
+			fmt.Fprintln(os.Stdout, `{"event":"result","result":{"conversation_id":"c1","status":"SUCCESS","response":"Completed `+role+`.\n","num_turns":1}}`)
+		case "denied":
+			fmt.Fprintln(os.Stdout, `{"event":"init","conversation_id":"c2","init":{"cwd":".","permission_mode":"request-review"}}`)
+			fmt.Fprintln(os.Stdout, `{"event":"step_update","step_update":{"step_index":1,"state":"ACTIVE","step_type":"tool","tool_name":"run_command","tool_info":{"name":"run_command","parameters":{"CommandLine":"cargo test --all"}}}}`)
+			fmt.Fprintln(os.Stdout, `{"event":"step_update","step_update":{"step_index":1,"state":"ERROR","step_type":"tool","tool_name":"run_command","tool_info":{"name":"run_command","parameters":{"CommandLine":"cargo test --all"},"error":{"type":"TOOL_ERROR","message":"permission check failed for unsandboxed \"cargo test --all\": user denied permission to run command:\ncargo test --all"}}}}`)
+			fmt.Fprintln(os.Stderr, `jetski: no output produced — a tool required the "command" permission that headless mode cannot prompt for, so it was auto-denied.`)
+			fmt.Fprintln(os.Stdout, `{"event":"result","result":{"conversation_id":"c2","status":"SUCCESS","response":"","num_turns":1,"denied_actions":[{"action":"command","display_name":"Bash"}]}}`)
+		case "empty-response":
+			fmt.Fprintln(os.Stdout, `{"event":"init","conversation_id":"c3","init":{"cwd":"."}}`)
+			fmt.Fprintln(os.Stdout, `{"event":"result","result":{"conversation_id":"c3","status":"SUCCESS","response":"   \n","num_turns":1}}`)
+		case "error-status":
+			fmt.Fprintln(os.Stdout, `{"event":"init","conversation_id":"c4","init":{"cwd":"."}}`)
+			fmt.Fprintln(os.Stdout, `{"event":"result","result":{"conversation_id":"c4","status":"ERROR","response":"","error":"model quota exceeded","num_turns":0}}`)
+		case "deny-rule-ok":
+			put(t, ".", "agy-"+role+".txt", "safe "+role+"\n")
+			fmt.Fprintln(os.Stdout, `{"event":"init","conversation_id":"c5","init":{"cwd":"."}}`)
+			fmt.Fprintln(os.Stdout, `{"event":"step_update","step_update":{"step_index":1,"state":"DONE","step_type":"tool","tool_name":"run_command","tool_info":{"name":"run_command","parameters":{"CommandLine":"go version"},"output":"go1.27\n"}}}`)
+			fmt.Fprintln(os.Stdout, `{"event":"step_update","step_update":{"step_index":2,"state":"ERROR","step_type":"tool","tool_name":"run_command","tool_info":{"name":"run_command","parameters":{"CommandLine":"git push --help"},"error":{"type":"TOOL_ERROR","message":"permission check failed for unsandboxed \"git push --help\": Permission denied for unsandboxed(git push --help). Matches user-configured deny rule."}}}}`)
+			fmt.Fprintln(os.Stdout, `{"event":"result","result":{"conversation_id":"c5","status":"SUCCESS","response":"Done safely.\n","num_turns":1}}`)
+		case "json-denied":
+			fmt.Fprintln(os.Stdout, `{"conversation_id":"c6","status":"SUCCESS","response":"","num_turns":1,"denied_actions":[{"action":"command","display_name":"Bash"}]}`)
+		case "malformed":
+			fmt.Fprintln(os.Stdout, `{not valid json`)
+			fmt.Fprintln(os.Stdout, `plain text line`)
+		case "truncated":
+			fmt.Fprintln(os.Stdout, `{"event":"init","conversation_id":"c7","init":{"cwd":"."}}`)
+			fmt.Fprintln(os.Stdout, `{"event":"step_update","step_update":{"step_index":1,"state":"ACTIVE","step_type":"tool","tool_name":"run_command","tool_info":{"name":"run_command","parameters":{"CommandLine":"go build ./..."}}}}`)
+		case "unknown-event":
+			put(t, ".", "agy-"+role+".txt", "ok "+role+"\n")
+			fmt.Fprintln(os.Stdout, `{"event":"future_telemetry","future_telemetry":{"ok":true}}`)
+			fmt.Fprintln(os.Stdout, `{"event":"result","result":{"conversation_id":"c8","status":"SUCCESS","response":"Handled future event.\n","num_turns":1}}`)
+		}
+		os.Exit(0)
+	}
 	if os.Getenv("REIFU_HELPER_MODE") == "prompt-arg" {
 		input, err := io.ReadAll(os.Stdin)
 		if err != nil {
@@ -248,8 +305,8 @@ func TestResolveAgent(t *testing.T) {
 	cfg := model.ReifuConfig{}
 	for name, want := range map[string][]string{
 		"claude": {"claude", "-p"}, "codex": {"codex", "exec", "-s", "workspace-write", "-"},
-		"gemini": {"gemini", "-p", ""}, "agy": {"agy", "--mode", "accept-edits", "--print={prompt}"},
-		"antigravity": {"agy", "--mode", "accept-edits", "--print={prompt}"},
+		"gemini": {"gemini", "-p", ""}, "agy": {"agy", "--mode", "accept-edits", "--output-format", "stream-json", "--print={prompt}"},
+		"antigravity": {"agy", "--mode", "accept-edits", "--output-format", "stream-json", "--print={prompt}"},
 	} {
 		a, err := ResolveAgent(cfg, name)
 		if err != nil || a.IsCustom || !reflect.DeepEqual(a.Argv, want) || a.Name != want[0] {
@@ -984,7 +1041,7 @@ func TestAgySettingsAttachment(t *testing.T) {
 			t.Fatal(err)
 		}
 		wantSettings := res.Plan.State.RunDir + "/agy-settings.json"
-		wantArgv := []string{"agy", "--mode", "accept-edits", "--settings", wantSettings, "--print={prompt}"}
+		wantArgv := []string{"agy", "--mode", "accept-edits", "--output-format", "stream-json", "--settings", wantSettings, "--print={prompt}"}
 		if !reflect.DeepEqual(res.Plan.Implementer.Argv, wantArgv) {
 			t.Fatalf("implementer argv = %q, want %q", res.Plan.Implementer.Argv, wantArgv)
 		}
@@ -1005,7 +1062,7 @@ func TestAgySettingsAttachment(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		wantArgv := []string{"agy", "--mode", "accept-edits", "--print={prompt}"}
+		wantArgv := []string{"agy", "--mode", "accept-edits", "--output-format", "stream-json", "--print={prompt}"}
 		if !reflect.DeepEqual(res.Plan.Implementer.Argv, wantArgv) {
 			t.Fatalf("implementer argv = %q, want %q", res.Plan.Implementer.Argv, wantArgv)
 		}
@@ -1092,4 +1149,213 @@ func TestCommandLineUTF16Len(t *testing.T) {
 	if got := utf16Len("あ😀"); got != 3 {
 		t.Fatalf("utf16Len(あ😀) = %d, want 3", got)
 	}
+}
+
+func TestAgyStreamAndJSONOutcomes(t *testing.T) {
+	exe, err := filepath.Abs(os.Args[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	setup := func(t *testing.T, format, scenario string, noReview bool) (Options, *[]model.RunEvent) {
+		t.Helper()
+		opts, _ := fixture(t, true)
+		t.Setenv("REIFU_HELPER_MODE", "agy-stream")
+		t.Setenv("REIFU_AGY_SCENARIO", scenario)
+		opts.Phase = "01_alpha"
+		opts.NoReview = noReview
+		opts.Implementer = "agy"
+		opts.Reviewer = "agy"
+		opts.Config.Runner.Agents["agy"] = []string{
+			exe, "-test.run=^TestHelperAgentProcess$", "--", "implement", "--output-format", format, "--print={prompt}",
+		}
+		var events []model.RunEvent
+		opts.EventSink = func(ev model.RunEvent) { events = append(events, ev) }
+		return opts, &events
+	}
+
+	t.Run("stream-json success records readable logs and allowed commands", func(t *testing.T) {
+		opts, events := setup(t, "stream-json", "success", false)
+		res, err := Run(context.Background(), opts)
+		if err != nil {
+			t.Fatalf("run: %v", err)
+		}
+		p := res.State.Phases[0]
+		if p.Status != model.PhaseCompleted || p.CommandsLog == "" || len(p.DeniedCommands) != 0 {
+			t.Fatalf("phase = %+v", p)
+		}
+		implLog, err := ReadPhaseLog(opts.Root, *res.State, p.Name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		requireContains(t, string(implLog), "[tool] run_command: go test ./... (ok)", "Completed implement.")
+		if strings.Contains(string(implLog), `"event":"step_update"`) {
+			t.Fatalf("raw stream-json leaked into implement log:\n%s", implLog)
+		}
+		var streamedLogs strings.Builder
+		for _, ev := range *events {
+			if ev.Type == model.EventLog {
+				streamedLogs.WriteString(ev.Text)
+			}
+		}
+		requireContains(t, streamedLogs.String(), "[tool] run_command: go test ./... (ok)", "Completed implement.")
+		if strings.Contains(streamedLogs.String(), `"event":"init"`) {
+			t.Fatalf("raw JSON leaked into EventLog: %s", streamedLogs.String())
+		}
+		cmdLog, err := ReadPhaseCommands(opts.Root, *res.State, p.Name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if cmdLog.Version != 1 || cmdLog.Phase != p.Name || len(cmdLog.Commands) != 2 {
+			t.Fatalf("commands log = %+v", cmdLog)
+		}
+		if cmdLog.Commands[0].Step != implementStep || cmdLog.Commands[0].Command != "go test ./..." || cmdLog.Commands[0].Status != model.CommandAllowed ||
+			cmdLog.Commands[1].Step != reviewStep || cmdLog.Commands[1].Status != model.CommandAllowed {
+			t.Fatalf("unexpected commands: %+v", cmdLog.Commands)
+		}
+		summary, err := readText(opts.Root, res.State.RunDir+"/summary.md")
+		if err != nil {
+			t.Fatal(err)
+		}
+		requireContains(t, string(summary), "01_alpha_commands.json")
+	})
+
+	t.Run("stream-json headless auto-deny fails phase, records command, and resumes cleanly", func(t *testing.T) {
+		opts, events := setup(t, "stream-json", "denied", true)
+		res, err := Run(context.Background(), opts)
+		if model.ExitCodeOf(err) != model.ExitDrift {
+			t.Fatalf("expected ExitDrift on denied command, got %v", err)
+		}
+		requireContains(t, err.Error(), "cargo test --all", "permissions.allow_commands")
+		p := res.State.Phases[0]
+		if p.Status != model.PhaseFailed || p.ResumeStep != implementStep ||
+			!slices.Equal(p.DeniedCommands, []string{"cargo test --all"}) || p.CommandsLog == "" {
+			t.Fatalf("failed phase = %+v", p)
+		}
+		cmdLog, err := ReadPhaseCommands(opts.Root, *res.State, p.Name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(cmdLog.Commands) != 1 || cmdLog.Commands[0].Command != "cargo test --all" ||
+			cmdLog.Commands[0].Status != model.CommandDenied || cmdLog.Commands[0].DeniedBy != "headless_auto_deny" {
+			t.Fatalf("denied commands log = %+v", cmdLog)
+		}
+		summary, err := readText(opts.Root, res.State.RunDir+"/summary.md")
+		if err != nil {
+			t.Fatal(err)
+		}
+		requireContains(t, string(summary), "## Denied commands", "cargo test --all", "01_alpha_commands.json")
+		phaseFailed := (*events)[len(*events)-2]
+		runFailed := (*events)[len(*events)-1]
+		if phaseFailed.Type != model.EventPhaseFailed || !slices.Equal(phaseFailed.DeniedCommands, []string{"cargo test --all"}) ||
+			runFailed.Type != model.EventRunFailed || !slices.Equal(runFailed.DeniedCommands, []string{"cargo test --all"}) {
+			t.Fatalf("failed events missing denied_commands: phase=%+v run=%+v", phaseFailed, runFailed)
+		}
+
+		// After the user grants permission and resumes, implement succeeds and clears denied_commands.
+		t.Setenv("REIFU_AGY_SCENARIO", "success")
+		opts.Phase = ""
+		opts.NoReview = false
+		opts.Resume = true
+		resumed, err := Run(context.Background(), opts)
+		if err != nil {
+			t.Fatalf("resume after granting permission: %v", err)
+		}
+		rp := resumed.State.Phases[0]
+		if rp.Status != model.PhaseCompleted || len(rp.DeniedCommands) != 0 || rp.ImplementCommit == "" {
+			t.Fatalf("resumed phase = %+v", rp)
+		}
+		cmdLog, err = ReadPhaseCommands(opts.Root, *resumed.State, rp.Name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(cmdLog.Commands) != 1 || cmdLog.Commands[0].Status != model.CommandAllowed {
+			t.Fatalf("resumed commands log = %+v", cmdLog)
+		}
+	})
+
+	t.Run("stream-json empty response fails", func(t *testing.T) {
+		opts, _ := setup(t, "stream-json", "empty-response", true)
+		res, err := Run(context.Background(), opts)
+		if model.ExitCodeOf(err) != model.ExitDrift || !strings.Contains(err.Error(), "empty response") || res.State.Phases[0].Status != model.PhaseFailed {
+			t.Fatalf("empty response: res=%+v err=%v", res.State, err)
+		}
+	})
+
+	t.Run("stream-json ERROR status fails", func(t *testing.T) {
+		opts, _ := setup(t, "stream-json", "error-status", true)
+		res, err := Run(context.Background(), opts)
+		if model.ExitCodeOf(err) != model.ExitDrift || !strings.Contains(err.Error(), "model quota exceeded") || res.State.Phases[0].Status != model.PhaseFailed {
+			t.Fatalf("error status: res=%+v err=%v", res.State, err)
+		}
+	})
+
+	t.Run("stream-json explicit deny_rule recorded without suggesting allow_commands", func(t *testing.T) {
+		opts, _ := setup(t, "stream-json", "deny-rule-ok", true)
+		res, err := Run(context.Background(), opts)
+		if err != nil {
+			t.Fatalf("deny-rule-ok should succeed when agent recovers: %v", err)
+		}
+		p := res.State.Phases[0]
+		if len(p.DeniedCommands) != 0 {
+			t.Fatalf("explicit deny_rule should not appear in allow candidates: %v", p.DeniedCommands)
+		}
+		cmdLog, err := ReadPhaseCommands(opts.Root, *res.State, p.Name)
+		if err != nil || len(cmdLog.Commands) != 2 {
+			t.Fatalf("commands log = %+v (%v)", cmdLog, err)
+		}
+		if cmdLog.Commands[1].Command != "git push --help" || cmdLog.Commands[1].Status != model.CommandDenied || cmdLog.Commands[1].DeniedBy != "deny_rule" {
+			t.Fatalf("unexpected deny_rule record: %+v", cmdLog.Commands[1])
+		}
+	})
+
+	t.Run("json format denied_actions records fallback tool name and fails", func(t *testing.T) {
+		opts, _ := setup(t, "json", "json-denied", true)
+		res, err := Run(context.Background(), opts)
+		if model.ExitCodeOf(err) != model.ExitDrift || !strings.Contains(err.Error(), "Bash") {
+			t.Fatalf("json denied: res=%+v err=%v", res.State, err)
+		}
+		cmdLog, err := ReadPhaseCommands(opts.Root, *res.State, res.State.Phases[0].Name)
+		if err != nil || len(cmdLog.Commands) != 1 || cmdLog.Commands[0].Tool != "Bash" || cmdLog.Commands[0].Status != model.CommandDenied {
+			t.Fatalf("json denied commands = %+v (%v)", cmdLog, err)
+		}
+	})
+
+	t.Run("malformed, truncated, and unknown events handled safely", func(t *testing.T) {
+		for _, scenario := range []string{"malformed", "truncated"} {
+			opts, _ := setup(t, "stream-json", scenario, true)
+			if _, err := Run(context.Background(), opts); model.ExitCodeOf(err) != model.ExitDrift {
+				t.Fatalf("%s: expected ExitDrift, got %v", scenario, err)
+			}
+		}
+		opts, _ := setup(t, "stream-json", "unknown-event", true)
+		if res, err := Run(context.Background(), opts); err != nil || res.State.Phases[0].Status != model.PhaseCompleted {
+			t.Fatalf("unknown-event: res=%+v err=%v", res.State, err)
+		}
+	})
+}
+
+func TestAgentEmptyOutputNoDiffSafetyNet(t *testing.T) {
+	t.Run("fails when git repo has no diff and agent emits nothing", func(t *testing.T) {
+		opts, _ := fixture(t, true)
+		t.Setenv("REIFU_HELPER_MODE", "silent-noop")
+		t.Setenv("REIFU_NOOP_TEXT", "")
+		opts.Phase = "01_alpha"
+		opts.NoReview = true
+		res, err := Run(context.Background(), opts)
+		if model.ExitCodeOf(err) != model.ExitDrift || !strings.Contains(err.Error(), "no repository changes and no output") || res.State.Phases[0].Status != model.PhaseFailed {
+			t.Fatalf("silent noop: res=%+v err=%v", res.State, err)
+		}
+	})
+
+	t.Run("allows legitimate zero-diff phase when agent emits text", func(t *testing.T) {
+		opts, _ := fixture(t, true)
+		t.Setenv("REIFU_HELPER_MODE", "silent-noop")
+		t.Setenv("REIFU_NOOP_TEXT", "Already satisfied; no changes needed.")
+		opts.Phase = "01_alpha"
+		opts.NoReview = true
+		res, err := Run(context.Background(), opts)
+		if err != nil || res.State.Phases[0].Status != model.PhaseCompleted {
+			t.Fatalf("explained zero-diff phase failed: res=%+v err=%v", res.State, err)
+		}
+	})
 }

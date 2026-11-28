@@ -35,7 +35,7 @@ func ResolveAgent(cfg model.ReifuConfig, name string) (AgentCommand, error) {
 	case "gemini":
 		argv = []string{"gemini", "-p", ""}
 	case "agy":
-		argv = []string{"agy", "--mode", "accept-edits", "--print=" + model.PromptPlaceholder}
+		argv = []string{"agy", "--mode", "accept-edits", "--output-format", "stream-json", "--print=" + model.PromptPlaceholder}
 	default:
 		return AgentCommand{}, fmt.Errorf("unknown runner agent %q", name)
 	}

@@ -65,6 +65,7 @@ reifu/
 │   │   ├── runner.go                   # フェーズ実行→レビュー→コミット自動ループ・中断再開・レポート生成
 │   │   ├── steps.go                    # 実装・レビュー各ステップ、子プロセス起動・ストリーミング・ハートビート
 │   │   ├── agents.go                   # claude / codex / gemini / agy 起動コマンド解決
+│   │   ├── agy_output.go               # agy stream-json / json 解析・失敗判定・コマンド履歴抽出
 │   │   ├── git.go                      # ローカル git status / add(除外pathspec付き) / commit / diff --stat
 │   │   ├── logs.go                     # `reifu logs` 用読み取り専用ログ・レビュー・追従リーダー
 │   │   └── runner_test.go
@@ -231,6 +232,31 @@ reifu/
   2. `.reifu.jsonc` の `permissions` にルールが存在する場合、`reifu run` が `internal/compiler.CompileAgySettings` で `.reifu/runs/<run-id>/agy-settings.json` を生成し、`--settings <path>` で当該セッションにのみ渡す（`runner.agents.agy` でカスタム定義した場合はユーザー指定引数を改変しない）。
   3. コマンドルールは `agy` の POSIX 語プレフィックス一致と Windows 行全体 `regex:` 一致の双方で機能するよう `command(...)` と `command(regex:...)` へ変換し、`deny_commands` が `Deny > Ask > Allow` の優先順位で確実に効くようにする。`deny_paths` は `read_file(...)` がパスプレフィックス一致であるためリテラルパスのみ出力する。
 * **採用理由**: `reifu` の「薄いグローバル・自己完結型ローカル」原則を厳守して `~/.gemini/` を一切書き換えず、`reifu sync` の管理対象ファイルやドリフト面も増やさずに `.reifu.jsonc` の `allow_commands` / `deny_commands` / `deny_paths` をそのまま `agy` のヘッドレス実行へ反映できるため。また `--mode accept-edits` を採用することで、アカウント種別やサンドボックス有無に依存せずワークスペース内のファイル編集を自動承認しつつ、コマンド実行は明示的な `allow` / `deny` ルールで安全に制御できる。
+
+### ADR-003: `agy` の `--output-format stream-json` 解析によるサイレント失敗検知とエージェント非依存の空実行ガード
+
+* **背景**: `agy` 1.5.18 のヘッドレスモードでは、未許可コマンドが自動拒否されて何も作業せずに終了しても、プロセス終了コードが `0` かつ `status: "SUCCESS"`（`response: ""`・`denied_actions` あり）で返るため、終了コードのみの監視では空のフェーズがすべて `completed` と誤認される。
+* **決定**:
+  1. 内蔵 `agy` の既定引数に `--output-format stream-json` を付与し、`internal/runner/agy_output.go` で `stdout` の NDJSON をリアルタイム解析する（`--output-format json` のカスタム指定も同様に終端エンベロープを解析する）。人間向けログ（`<phase>_implement.log`・`<phase>_review.md`・進捗表示・`--stream-json` の `log` イベント）には生 JSON を流さず、`[tool] ...` の 1 行要約と `text_delta` / `response` 本文のみを出力する。
+  2. プロセス終了コードが `0` であっても、次のいずれかに該当する場合はステップを `failed` にして停止する（既存の `--resume` で同一ステップからやり直し可能）:
+     * 終端の `result` イベントが欠落している（途中切断・壊れた JSON のみ等）
+     * `result.status != "SUCCESS"`
+     * `result.denied_actions` が非空、または `step_update` でヘッドレス自動拒否（`headless_auto_deny`）が検出された
+     * `result.response` が空白のみ（空レスポンス）
+     * ※ `deny_commands` による明示拒否（`Matches user-configured deny rule.`）は `result.denied_actions` に含まれず、エージェントが拒否に従って正常完走（`status == "SUCCESS"` かつ非空 `response`）した場合は失敗扱いしない。
+  3. 壊れた JSON 行・途中切断・未知のイベント種別でもパニックせず安全に処理する（未知イベントは無視、終端 `result` 欠落時は明確なエラー）。
+  4. **エージェント非依存の安全策**: Git リポジトリ上の実装ステップ（`implement`）において、エージェントが終了コード `0` で終了したにもかかわらず「作業ツリー差分なし・HEAD 未更新・エージェント出力も完全空（空白のみ）」のすべてを満たす場合は `failed` とする。一方、正当な差分ゼロフェーズ（既に要件充足・確認のみ等）ではエージェントが応答テキストを返すため、出力が非空であれば正常完了を許容する。
+* **採用理由**: `--output-format json` と比較して `stream-json` は終端 `result` に加えてリアルタイムの `step_update`（ツール名・`CommandLine`・成功/拒否状態・`text_delta`）を得られるため、進捗可視化・ハートビート維持・正確なコマンド抽出を同時に満たせる。また差分ゼロ＋出力ゼロの組み合わせのみを全エージェント共通の失敗条件とすることで、正当な差分ゼロフェーズの誤停止を避けつつサイレント異常終了を捕捉できる。
+
+### ADR-004: フェーズ別コマンド履歴（`<phase>_commands.json`）の記録と拒否コマンド提示
+
+* **背景**: ヘッドレス実行が権限不足で止まった際、`agy` の `--output-format json` の `denied_actions` にはツール種別（`command` / `Bash`）しか含まれず、どのコマンドを `.reifu.jsonc` の `permissions.allow_commands` に追加すべきか利用者が判別できない。
+* **決定**:
+  1. `agy` の `stream-json` `step_update`（`tool_info.parameters.CommandLine` 等）から実行・拒否されたコマンドを抽出し、フェーズごとに `.reifu/runs/<run-id>/<phase>_commands.json` へアトミック保存する（`--output-format json` 等でコマンド文字列が取れない場合は `result.denied_actions` のツール名／アクション名をフォールバック記録する）。
+  2. `denied_by` で許可不足の自動拒否（`headless_auto_deny`）と明示拒否ルール（`deny_rule`）を区別し、`headless_auto_deny` に該当したコマンドのみを `PhaseRunRecord.denied_commands`・`RunEvent.denied_commands`（`phase_failed` / `run_failed`）・`summary.md`・`reifu logs` / `reifu logs --json` および停止時エラーメッセージへ「`permissions.allow_commands` に足す候補」として表示する（`deny_commands` で意図的にブロックしたコマンドは許可候補に出さない）。
+  3. 記録をもとに `.reifu.jsonc` へ許可を自動追記することはしない（追加判断はユーザーに委ねる）。
+  4. **他エージェントのスコープ**: 内蔵の `claude` / `codex` / `gemini` は既定でプレーンテキスト出力のためコマンド抽出は現時点では `agy` のみ対象としつつ、`<phase>_commands.json` のスキーマは `agent` フィールドを持つ汎用構造として将来の拡張に備える。
+* **採用理由**: `--log-file` 等の外部ログ解析に依存せず、`agy` 公式仕様の `stream-json` `tool_info.parameters.CommandLine` からゼロ外部依存かつクロスプラットフォームで正確なコマンドを取得できるため。また許可の自動昇格を行わないことで `reifu` のセキュリティ境界を維持しつつ、`reifu logs` → `.reifu.jsonc` 追記 → `reifu run --resume` の最短復旧ループを実現できる。
 
 # **5\. エージェントディレクトリ存在判定ポリシー**
 

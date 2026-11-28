@@ -3,12 +3,14 @@ package runner
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/url"
 	"os"
 	"os/exec"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -250,14 +252,27 @@ func (e *execution) implement(ctx context.Context, i int, p *model.PhaseRunRecor
 		return err
 	}
 	_, err = fmt.Fprintf(log, "[%s] %s (%s)\n", time.Now().UTC().Format(time.RFC3339), p.File, e.implementer.Name)
+	var hasOutput bool
 	if err == nil {
-		err = e.agent(ctx, i, p, implementStep, e.implementer, e.implementPath, p.ImplementLog, prompt, log)
+		hasOutput, err = e.agent(ctx, i, p, implementStep, e.implementer, e.implementPath, p.ImplementLog, prompt, log)
 	}
 	if err := errors.Join(checkBlocked(e.Root), err, log.Close()); err != nil {
 		return err
 	}
 	p.ImplementDiff, err = e.stat(ctx, p.BaseCommit)
-	return err
+	if err != nil {
+		return err
+	}
+	if e.gitRepo && strings.TrimSpace(p.ImplementDiff) == "" && !hasOutput {
+		advanced, headErr := e.headIfAdvanced(ctx, p.BaseCommit)
+		if headErr != nil {
+			return headErr
+		}
+		if advanced == "" {
+			return fmt.Errorf("%s with %q in %q: agent exited 0 with no repository changes and no output", implementStep, e.implementer.Name, e.Root)
+		}
+	}
+	return nil
 }
 
 func (e *execution) review(ctx context.Context, i int, p *model.PhaseRunRecord) error {
@@ -269,7 +284,7 @@ func (e *execution) review(ctx context.Context, i int, p *model.PhaseRunRecord) 
 		p.Name, p.File, firstSet(p.ImplementAgent, e.run.Implementer), firstSet(p.ImplementCommit, "(none)"), p.ImplementDiff)
 	input := append([]byte(metadata+"\n---\n\n"), prompt...)
 	var output bytes.Buffer
-	agentErr := e.agent(ctx, i, p, reviewStep, e.reviewer, e.reviewPath, p.ReviewReport, input, &output)
+	_, agentErr := e.agent(ctx, i, p, reviewStep, e.reviewer, e.reviewPath, p.ReviewReport, input, &output)
 	blockedErr := checkBlocked(e.Root)
 	// A step timeout does not cancel the parent context. On interruption preserve
 	// the output even if Git can no longer provide a diff.
@@ -290,7 +305,7 @@ func (e *execution) banner(i int, p *model.PhaseRunRecord, step string, a AgentC
 		elapsed.Round(time.Millisecond), path)
 }
 
-func (e *execution) agent(ctx context.Context, i int, p *model.PhaseRunRecord, step string, a AgentCommand, executable, path string, prompt []byte, log io.Writer) error {
+func (e *execution) agent(ctx context.Context, i int, p *model.PhaseRunRecord, step string, a AgentCommand, executable, path string, prompt []byte, log io.Writer) (bool, error) {
 	prompt = bytes.TrimPrefix(prompt, []byte{0xef, 0xbb, 0xbf})
 	var cmdArgs []string
 	var stdin io.Reader
@@ -298,7 +313,7 @@ func (e *execution) agent(ctx context.Context, i int, p *model.PhaseRunRecord, s
 		var err error
 		cmdArgs, err = e.buildPromptArgs(executable, a.Argv[1:], p.Name, step, prompt)
 		if err != nil {
-			return fmt.Errorf("%s with %q in %q: %w", step, a.Name, e.Root, err)
+			return false, fmt.Errorf("%s with %q in %q: %w", step, a.Name, e.Root, err)
 		}
 	} else {
 		cmdArgs = a.Argv[1:]
@@ -362,15 +377,83 @@ func (e *execution) agent(ctx context.Context, i int, p *model.PhaseRunRecord, s
 	cmd := exec.CommandContext(ctx, executable, cmdArgs...)
 	cmd.Dir = e.Root
 	cmd.Stdin = stdin
-	cmd.Stdout, cmd.Stderr = stream, stream
+	var parser *agyOutputParser
+	if agyMode := detectAgyOutputMode(a); agyMode != agyOutputText {
+		parser = newAgyOutputParser(agyMode, step, a.Name, stream)
+		cmd.Stdout = parser
+		cmd.Stderr = stream
+	} else {
+		cmd.Stdout, cmd.Stderr = stream, stream
+	}
 	cmd.WaitDelay = 2 * time.Second
 	sysenv.KillTreeOnCancel(cmd)
-	err := cmd.Run()
+	runErr := cmd.Run()
 	close(done)
 	<-heartbeatDone
-	if err := errors.Join(err, ctx.Err(), stream.flush()); err != nil {
-		return fmt.Errorf("%s with %q in %q: %w", step, a.Name, e.Root, err)
+	var parseErr, recordErr error
+	if parser != nil {
+		outcome := parser.finish()
+		recordErr = e.recordPhaseCommands(p, step, outcome.Commands)
+		if runErr == nil && ctx.Err() == nil {
+			parseErr = outcome.Err
+		}
 	}
+	flushErr := stream.flush()
+	hasOutput := stream.hasOutput()
+	if err := errors.Join(runErr, ctx.Err(), parseErr, recordErr, flushErr); err != nil {
+		return hasOutput, fmt.Errorf("%s with %q in %q: %w", step, a.Name, e.Root, err)
+	}
+	return hasOutput, nil
+}
+
+func (e *execution) recordPhaseCommands(p *model.PhaseRunRecord, step string, records []model.CommandRecord) error {
+	rel := e.run.RunDir + "/" + p.Name + "_commands.json"
+	var merged []model.CommandRecord
+	if existing, err := readText(e.Root, rel); err == nil {
+		var prev model.PhaseCommandsLog
+		if json.Unmarshal(existing, &prev) == nil {
+			for _, rec := range prev.Commands {
+				if rec.Step != step {
+					merged = append(merged, rec)
+				}
+			}
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("read command log %q: %w", rel, err)
+	}
+	merged = append(merged, records...)
+	var denied []string
+	for _, rec := range merged {
+		if rec.Status == model.CommandDenied && rec.DeniedBy == "headless_auto_deny" {
+			label := firstSet(rec.Command, rec.Tool)
+			if label != "" && !slices.Contains(denied, label) {
+				denied = append(denied, label)
+			}
+		}
+	}
+	p.DeniedCommands = denied
+	if len(merged) == 0 && p.CommandsLog == "" {
+		return nil
+	}
+	if merged == nil {
+		merged = []model.CommandRecord{}
+	}
+	doc := model.PhaseCommandsLog{
+		Version:  1,
+		Phase:    p.Name,
+		Commands: merged,
+	}
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(doc); err != nil {
+		return fmt.Errorf("encode command log %q: %w", rel, err)
+	}
+	if err := fsx.WriteFileAtomic(e.Root, rel, buf.Bytes()); err != nil {
+		return fmt.Errorf("write command log %q: %w", rel, err)
+	}
+	p.CommandsLog = rel
 	return nil
 }
 
@@ -399,12 +482,19 @@ func (e *execution) buildPromptArgs(executable string, templateArgs []string, ph
 // agentStream normalizes text across pipe reads, including split UTF-8
 // sequences and CRLF pairs. The same writer receives both child streams.
 type agentStream struct {
-	mu      sync.Mutex
-	out     io.Writer
-	last    time.Time
-	pending []byte
-	first   bool
-	onText  func(string)
+	mu          sync.Mutex
+	out         io.Writer
+	last        time.Time
+	pending     []byte
+	first       bool
+	hasNonSpace bool
+	onText      func(string)
+}
+
+func (s *agentStream) hasOutput() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.hasNonSpace
 }
 
 func (s *agentStream) Write(data []byte) (int, error) {
@@ -419,6 +509,8 @@ func (s *agentStream) Write(data []byte) (int, error) {
 }
 
 func (s *agentStream) flush() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	return s.writeText(true)
 }
 
@@ -449,9 +541,13 @@ func (s *agentStream) writeText(final bool) error {
 	if text.Len() == 0 {
 		return nil
 	}
-	_, err := io.WriteString(s.out, text.String())
+	outText := text.String()
+	if strings.TrimSpace(outText) != "" {
+		s.hasNonSpace = true
+	}
+	_, err := io.WriteString(s.out, outText)
 	if s.onText != nil {
-		s.onText(text.String())
+		s.onText(outText)
 	}
 	return err
 }

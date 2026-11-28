@@ -74,7 +74,9 @@ func validateRunState(run model.RunState) error {
 	for _, phase := range run.Phases {
 		expected, err := phaseRecord(run.RunDir, phase.Name+".md")
 		key := strings.ToLower(phase.Name)
-		if err != nil || seen[key] || phase.File != expected.File || phase.ImplementLog != expected.ImplementLog || phase.ReviewReport != expected.ReviewReport {
+		expectedCommands := run.RunDir + "/" + phase.Name + "_commands.json"
+		if err != nil || seen[key] || phase.File != expected.File || phase.ImplementLog != expected.ImplementLog || phase.ReviewReport != expected.ReviewReport ||
+			(phase.CommandsLog != "" && phase.CommandsLog != expectedCommands) {
 			return fmt.Errorf("invalid phase %q in run %q", phase.Name, run.RunID)
 		}
 		seen[key] = true
@@ -173,6 +175,33 @@ func ReadPhaseLog(root string, run model.RunState, phaseName string) ([]byte, er
 		}
 	}
 	return readText(root, run.Phases[i].ImplementLog)
+}
+
+func ReadPhaseCommands(root string, run model.RunState, phaseName string) (model.PhaseCommandsLog, error) {
+	if err := validateRunState(run); err != nil {
+		return model.PhaseCommandsLog{}, err
+	}
+	i := latestPhase(run)
+	if phaseName != "" {
+		var err error
+		i, err = phaseIndex(run, phaseName)
+		if err != nil {
+			return model.PhaseCommandsLog{}, err
+		}
+	}
+	rel := run.Phases[i].CommandsLog
+	if rel == "" {
+		rel = run.RunDir + "/" + run.Phases[i].Name + "_commands.json"
+	}
+	data, err := readText(root, rel)
+	if err != nil {
+		return model.PhaseCommandsLog{}, err
+	}
+	var log model.PhaseCommandsLog
+	if err := json.Unmarshal(data, &log); err != nil {
+		return model.PhaseCommandsLog{}, fmt.Errorf("decode %q: %w", rel, err)
+	}
+	return log, nil
 }
 
 func ReadReviews(root string, run model.RunState, phaseName string) ([]byte, error) {

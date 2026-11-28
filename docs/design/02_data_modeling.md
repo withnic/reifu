@@ -301,7 +301,7 @@ type ReifuConfig struct {
 | `claude` | `["claude", "-p"]` | `stdin` | `.claude/settings.json` を参照 |
 | `codex` | `["codex", "exec", "-s", "<sandbox.mode>", "-"]` | `stdin` | `<sandbox.mode>` は `.reifu.jsonc` の `sandbox.mode`（既定 `workspace-write`） |
 | `gemini` | `["gemini", "-p", ""]` | `stdin` | `.gemini/settings.json` を参照 |
-| `agy`（別名: `antigravity`） | `["agy", "--mode", "accept-edits", "--print={prompt}"]` | 引数（`{prompt}` 展開、`stdin` なし） | `.reifu.jsonc` の `permissions` が非空の場合、ラン開始時に `--settings .reifu/runs/<run-id>/agy-settings.json` を自動付与 |
+| `agy`（別名: `antigravity`） | `["agy", "--mode", "accept-edits", "--output-format", "stream-json", "--print={prompt}"]` | 引数（`{prompt}` 展開、`stdin` なし） | `.reifu.jsonc` の `permissions` が非空の場合、ラン開始時に `--settings .reifu/runs/<run-id>/agy-settings.json` を自動付与。`stream-json` のツール呼び出しと `result` を解析し、失敗判定とコマンド履歴記録を行う |
 
 ### `{prompt}` プレースホルダと長文プロンプト退避
 
@@ -320,6 +320,47 @@ type ReifuConfig struct {
 * **`permissions.deny_paths` → `permissions.deny`**:
   * `agy` の `read_file(<path>)` はパスプレフィックス一致（かつ `read_file` 拒否が `write_file` 拒否を暗黙に含む）であるため、`*` / `?` を含まないリテラルパス（例: `.env`）を正規化して `"read_file(<path>)"` として出力する（glob パターンはスキップ）。
 * 優先順位は `agy` のパーミッションエンジンに従い **`Deny > Ask > Allow`** が保証される。
+
+### フェーズ別コマンド履歴（`.reifu/runs/<run-id>/<phase>_commands.json`）スキーマ
+
+`agy`（`--output-format stream-json` または `json`）の実行時に取得できたコマンド実行・拒否履歴をフェーズ単位で UTF-8 / LF の JSON として保存する。`PhaseRunRecord`（`.reifu.run.json` / `run.json`）には任意フィールド `commands_log`（相対パス）と `denied_commands`（ヘッドレス自動拒否されたコマンドまたはツール名の配列）を記録する。`--resume` で同一ステップを再実行した場合は当該ステップのエントリを最新結果で置き換える。
+
+```json
+{
+  "version": 1,
+  "phase": "01_setup",
+  "commands": [
+    {
+      "step": "implement",
+      "agent": "agy",
+      "tool": "run_command",
+      "command": "go test ./...",
+      "status": "allowed"
+    },
+    {
+      "step": "implement",
+      "agent": "agy",
+      "tool": "run_command",
+      "command": "cargo test --all",
+      "status": "denied",
+      "denied_by": "headless_auto_deny",
+      "error": "permission check failed for unsandboxed \"cargo test --all\": user denied permission to run command:"
+    }
+  ]
+}
+```
+
+| フィールド | 型 | 説明 |
+| :---- | :---- | :---- |
+| `version` | int | 固定値 `1` |
+| `phase` | string | 対象フェーズ名（拡張子なし） |
+| `commands[].step` | string | `"implement"` または `"review"` |
+| `commands[].agent` | string | エージェント名（例: `"agy"`） |
+| `commands[].tool` | string | ツール名（例: `"run_command"`, `"Bash"`） |
+| `commands[].command` | string (任意) | 実行しようとしたコマンド文字列（取得できた場合） |
+| `commands[].status` | string | `"allowed"` / `"denied"` / `"error"` |
+| `commands[].denied_by` | string (任意) | `"headless_auto_deny"`（許可不足による自動拒否）または `"deny_rule"`（`deny_commands` 等の明示拒否ルール一致） |
+| `commands[].error` | string (任意) | 拒否・エラー時の先頭行メッセージ |
 
 # **5\. 状態遷移とドリフト検知・逆取り込み（`--import`）アルゴリズム**
 
@@ -463,8 +504,8 @@ type ReifuConfig struct {
 | `commit` | フェーズ識別情報, `step`, `commit` |
 | `step_completed` | フェーズ識別情報, `step`, `agent`, `commit`, `path` |
 | `phase_completed` | フェーズ識別情報, `status: "completed"` |
-| `phase_failed` | フェーズ識別情報, `status: "failed" \| "blocked"`, `error` |
+| `phase_failed` | フェーズ識別情報, `status: "failed" \| "blocked"`, `error`, `denied_commands`（許可不足で拒否されたコマンドがある場合） |
 | `run_completed` | `run_id`, `status: "completed"`, `state` |
-| `run_failed` | `run_id`, `status: "failed" \| "blocked"`, `error`, `state` |
+| `run_failed` | `run_id`, `status: "failed" \| "blocked"`, `error`, `denied_commands`（許可不足で拒否されたコマンドがある場合）, `state` |
 
 ランごとの終端イベントは `run_plan`、`run_completed`、`run_failed` のうち 1 行。ランナーが終端を送る前にエラー終了した場合は、CLI が `run_failed` を補う。フォールバックの `status` は `BLOCKED_REPORT.md` による Exit 2 で `blocked`、それ以外で `failed` になる。`--resume` で `implement_commit` / `review_commit` から再開したステップでは `commit` / `step_completed` が出て、`step_started` は省略される。キャンセルとタイムアウトはどちらも `failed` になり、`error` の `context canceled` / `context deadline exceeded` で区別できる。

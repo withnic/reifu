@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"text/tabwriter"
 	"time"
@@ -130,5 +131,29 @@ func (c CLI) printRunState(run model.RunState) error {
 		fmt.Fprintf(table, "%s\t%s\t%s\t%s\t%dms\t%s\t%s\n",
 			phase.Name, phase.Status, phase.ImplementCommit, phase.ReviewCommit, phase.DurationMS, phase.ImplementLog, phase.ReviewReport)
 	}
-	return table.Flush()
+	if err := table.Flush(); err != nil {
+		return err
+	}
+	var deniedLines []string
+	for _, phase := range run.Phases {
+		if len(phase.DeniedCommands) == 0 {
+			continue
+		}
+		quoted := make([]string, len(phase.DeniedCommands))
+		for i, cmd := range phase.DeniedCommands {
+			quoted[i] = fmt.Sprintf("%q", cmd)
+		}
+		deniedLines = append(deniedLines, fmt.Sprintf("  - %s: %s", phase.Name, strings.Join(quoted, ", ")))
+	}
+	if len(deniedLines) > 0 {
+		if _, err := fmt.Fprintln(c.Stdout, "\nDenied commands (add needed patterns to permissions.allow_commands in .reifu.jsonc, then run `reifu run --resume`):"); err != nil {
+			return err
+		}
+		for _, line := range deniedLines {
+			if _, err := fmt.Fprintln(c.Stdout, line); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }

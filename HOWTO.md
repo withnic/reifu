@@ -288,7 +288,7 @@ reifu run --implementer agy --reviewer gemini
   "notify": "end",
   "agents": {
     "claude": ["claude", "-p", "--model", "sonnet"],
-    "agy": ["agy", "--mode", "accept-edits", "--print={prompt}"]
+    "agy": ["agy", "--mode", "accept-edits", "--output-format", "stream-json", "--print={prompt}"]
   }
 }
 ```
@@ -300,10 +300,14 @@ reifu run --implementer agy --reviewer gemini
 | `claude` | `["claude", "-p"]` | `stdin` |
 | `codex` | `["codex", "exec", "-s", "<sandbox.mode>", "-"]` | `stdin` |
 | `gemini` | `["gemini", "-p", ""]` | `stdin` |
-| `agy`（`antigravity`） | `["agy", "--mode", "accept-edits", "--print={prompt}"]` | 引数（`{prompt}` 展開、`stdin` なし） |
+| `agy`（`antigravity`） | `["agy", "--mode", "accept-edits", "--output-format", "stream-json", "--print={prompt}"]` | 引数（`{prompt}` 展開、`stdin` なし） |
 
 * **引数へのプロンプト差し込み（`{prompt}`）**: `runner.agents` の 2 番目以降の要素（`argv[1:]`）に `{prompt}` を含めると、プロンプト本文（UTF-8 / LF）を引数として直接渡し、`stdin` は閉じます（`argv[0]` には指定不可）。コマンドライン長が 24,000 UTF-16 コード単位を超える長文プロンプトは、Windows の 32,767 文字上限などを回避するため自動的に `.reifu/runs/<run-id>/<phase>_<step>_prompt.md` へ書き出し、そのファイルを読んで従う短い指示を引数に渡します。
-* **`agy`（Antigravity CLI）のヘッドレス権限**: `agy` はプロジェクト内の `.gemini/settings.json` を読まず永続設定はグローバル `~/.gemini/antigravity-cli/settings.json` のみのため、内蔵 `agy` の実行時に `.reifu.jsonc` の `permissions`（`allow_commands` / `deny_commands` / リテラル `deny_paths`）を `.reifu/runs/<run-id>/agy-settings.json` へ変換し、`--settings` で当該セッションにのみ適用します。グローバル設定は一切変更せず、`--dangerously-skip-permissions` も既定では付与しません（`runner.agents.agy` でカスタム定義した場合は指定引数をそのまま使います）。
+* **`agy`（Antigravity CLI）のヘッドレス権限と失敗検知**: `agy` はプロジェクト内の `.gemini/settings.json` を読まず永続設定はグローバル `~/.gemini/antigravity-cli/settings.json` のみのため、内蔵 `agy` の実行時に `.reifu.jsonc` の `permissions`（`allow_commands` / `deny_commands` / リテラル `deny_paths`）を `.reifu/runs/<run-id>/agy-settings.json` へ変換し、`--settings` で当該セッションにのみ適用します。グローバル設定は一切変更せず、`--dangerously-skip-permissions` も既定では付与しません（`runner.agents.agy` でカスタム定義した場合は指定引数をそのまま使います）。また `--output-format stream-json` の結果を解析し、終了コードが `0` でも `status != "SUCCESS"`・`denied_actions` 発生・空レスポンスのいずれかならステップを `failed` で安全停止します（実装ログやレビューレポートには生の JSON ではなく人間が読める要約と応答本文を記録します）。
+* **コマンド履歴の確認と許可追加の手順**: `agy` が実行または拒否されたコマンドはフェーズごとに `.reifu/runs/<run-id>/<phase>_commands.json` に記録され、許可不足による拒否コマンドは `reifu logs`・`reifu logs --json`・`summary.md` および停止時のエラーに表示されます。`reifu` は許可を自動追加しないため、停止時は次の手順で再開してください。
+  1. `reifu logs`（または `.reifu/runs/<run-id>/<phase>_commands.json`）で拒否されたコマンドを確認する。
+  2. 許可してよいコマンドのパターンだけを `.reifu.jsonc` の `permissions.allow_commands` に手動で追記する（必要なら `reifu sync` で他エージェント設定にも反映）。
+  3. `reifu run --resume`（未コミット変更がある場合は確認のうえ `--allow-dirty` を併用）で失敗したステップから再開する。
 
 `--phase 01_foundation` で 1 件、`--from 01_foundation` でそのフェーズ以降を選べます。実装・レビュー各ステップの制限時間は既定で 30 分です。`--timeout 0` で無制限になります。`--no-review` でレビューを、`--no-commit` で自動コミットを省略できます。
 
