@@ -393,3 +393,60 @@ func TestCompileAgySettings(t *testing.T) {
 		t.Fatalf("deny =\n%v\nwant:\n%v", parsed.Permissions.Deny, wantDeny)
 	}
 }
+
+func TestCompileCodexRules(t *testing.T) {
+	if out, ok, err := CompileCodexRules(model.ReifuConfig{}); err != nil || ok || out != nil {
+		t.Fatalf("empty deny_commands: out=%q ok=%v err=%v", out, ok, err)
+	}
+	if _, _, err := CompileCodexRules(model.ReifuConfig{
+		Permissions: model.PermissionsModel{DenyCommands: []string{"git push\nmalicious"}},
+	}); err == nil {
+		t.Fatal("expected control character rejection")
+	}
+
+	cfg := model.ReifuConfig{
+		Permissions: model.PermissionsModel{
+			DenyCommands: []string{
+				"git push *",
+				"git push*",
+				"git reset --hard*",
+				"git clean*",
+				"git checkout -- *",
+				"git branch -D*",
+				"rm -rf *",
+				"Remove-Item*-Recurse*",
+				"rd /s*",
+				"rmdir /s*",
+				"del /s*",
+			},
+		},
+	}
+	out, ok, err := CompileCodexRules(cfg)
+	if err != nil || !ok {
+		t.Fatalf("CompileCodexRules: ok=%v err=%v", ok, err)
+	}
+	text := string(out)
+	if strings.ContainsRune(text, '\r') || !strings.HasSuffix(text, "\n") {
+		t.Fatalf("expected LF-terminated rules: %q", text)
+	}
+	if strings.Count(text, `pattern = ["git", "push"]`) != 1 {
+		t.Fatalf("expected deduplicated git push rule:\n%s", text)
+	}
+	for _, want := range []string{
+		`pattern = ["git", "push"]`,
+		`pattern = ["git", "reset", "--hard"]`,
+		`pattern = ["git", "clean"]`,
+		`pattern = ["git", "checkout", "--"]`,
+		`pattern = ["git", "branch", "-D"]`,
+		`pattern = ["rm", "-rf"]`,
+		`pattern = [["Remove-Item", "remove-item", "REMOVE-ITEM"], ["-Recurse", "-recurse", "-r"]]`,
+		`pattern = [["rd", "RD"], ["/s", "/S"]]`,
+		`pattern = [["rmdir", "RMDIR"], ["/s", "/S"]]`,
+		`pattern = [["del", "DEL"], ["/s", "/S"]]`,
+		`decision = "forbidden"`,
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("missing %s in:\n%s", want, text)
+		}
+	}
+}

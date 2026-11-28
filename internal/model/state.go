@@ -45,6 +45,8 @@ type TargetState struct {
 	AppliedOSDenyRules    []string   `json:"applied_os_deny_rules,omitempty"`
 	AppliedSandbox        *bool      `json:"applied_sandbox,omitempty"`
 	AppliedVerifySteps    [][]string `json:"applied_verify_steps,omitempty"`
+	RulesPath             string     `json:"rules_path,omitempty"`
+	RulesFileSHA256       string     `json:"rules_file_sha256,omitempty"`
 }
 
 // StatusReport matches the JSON schema for `reifu status --json`.

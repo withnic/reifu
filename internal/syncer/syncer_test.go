@@ -380,3 +380,57 @@ func TestSyncSkillsProtectsCustomSourceFromAliasedTargets(t *testing.T) {
 		t.Fatal(string(got))
 	}
 }
+
+func TestSyncCodexRulesLifecycleAndDrift(t *testing.T) {
+	root := t.TempDir()
+	const withDeny = `{"version":1,"project":{"preset":"minimal"},"agents":{"targets":["codex"]},"permissions":{"allow_commands":["*"],"deny_commands":["git push *","rm -rf *"]}}`
+	writeFixture(t, root, MasterPath, withDeny+"\n")
+	writeFixture(t, root, ".codex/rules/custom.rules", "# keep custom\n")
+
+	res, err := Sync(root, Options{Create: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(res.ChangedPaths, CodexRulesPath) {
+		t.Fatalf("expected %s in changed paths: %v", CodexRulesPath, res.ChangedPaths)
+	}
+	rules := string(readFixture(t, root, CodexRulesPath))
+	if !strings.Contains(rules, `pattern = ["git", "push"]`) || !strings.Contains(rules, `decision = "forbidden"`) {
+		t.Fatalf("unexpected codex rules:\n%s", rules)
+	}
+	if got := string(readFixture(t, root, ".codex/rules/custom.rules")); got != "# keep custom\n" {
+		t.Fatalf("custom rules altered: %q", got)
+	}
+
+	// Second sync is a no-op.
+	res, err = Sync(root, Options{})
+	if err != nil || len(res.ChangedPaths) != 0 {
+		t.Fatalf("second sync: %+v (%v)", res, err)
+	}
+
+	// External edit to reifu.rules is detected as DRIFTED and blocked without --force.
+	writeFixture(t, root, CodexRulesPath, "# tampered\n")
+	if res, err := Sync(root, Options{}); model.ExitCodeOf(err) != model.ExitDrift || res.Targets[model.AgentCodex].Status != model.StatusDrifted {
+		t.Fatalf("expected DRIFTED on tampered rules: %+v (%v)", res, err)
+	}
+	if _, err := Sync(root, Options{Force: true}); err != nil {
+		t.Fatal(err)
+	}
+	if got := string(readFixture(t, root, CodexRulesPath)); got != rules {
+		t.Fatalf("force sync did not restore rules:\n%s", got)
+	}
+
+	// Emptying deny_commands cleans up reifu.rules while keeping custom.rules intact.
+	const withoutDeny = `{"version":1,"project":{"preset":"minimal"},"agents":{"targets":["codex"]},"permissions":{"allow_commands":["*"],"deny_commands":[]}}`
+	writeFixture(t, root, MasterPath, withoutDeny+"\n")
+	res, err = Sync(root, Options{})
+	if err != nil || !slices.Contains(res.ChangedPaths, CodexRulesPath) {
+		t.Fatalf("cleanup sync: %+v (%v)", res, err)
+	}
+	if _, err := os.Lstat(filepath.Join(root, filepath.FromSlash(CodexRulesPath))); !os.IsNotExist(err) {
+		t.Fatalf("expected %s removed, stat err = %v", CodexRulesPath, err)
+	}
+	if got := string(readFixture(t, root, ".codex/rules/custom.rules")); got != "# keep custom\n" {
+		t.Fatalf("custom rules lost during cleanup: %q", got)
+	}
+}

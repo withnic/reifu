@@ -39,7 +39,9 @@ reifu/
 ├── .claude/
 │   └── settings.json                   # Claude Code 用設定（Stopフック・権限ガードレール）
 ├── .codex/
-│   └── config.toml                     # Codex CLI 用設定（workspace-write & network_access=false）
+│   ├── config.toml                     # Codex CLI 用設定（workspace-write & network_access=false）
+│   └── rules/
+│       └── reifu.rules                 # Codex CLI Execpolicy 禁止コマンドルール（deny_commands から生成）
 ├── .gemini/
 │   └── settings.json                   # Gemini CLI 用設定（AGENTS.md読込 & AfterAgentフック）
 ├── .gitignore
@@ -83,6 +85,7 @@ reifu/
 │   │   ├── agy.go
 │   │   ├── claude.go
 │   │   ├── codex.go
+│   │   ├── codex_rules.go
 │   │   ├── gemini.go
 │   │   └── compiler_test.go
 │   ├── syncer/

@@ -851,6 +851,8 @@ func TestInitOptions(t *testing.T) {
 	contains(t, d.read(".claude/settings.json"), "Bash(Remove-Item*-Recurse*)")
 	contains(t, d.read(".gemini/settings.json"), "run_shell_command(*)")
 	contains(t, d.read(".gemini/settings.json"), "run_shell_command(rd /s*)")
+	contains(t, d.read(".codex/rules/reifu.rules"), `pattern = ["git", "push"]`)
+	contains(t, d.read(".codex/rules/reifu.rules"), `decision = "forbidden"`)
 
 	strictRoot := filepath.Join(tmp, "strict-perms")
 	st := cliTest{t: t, root: strictRoot, presets: filepath.Join(tmp, "presets")}

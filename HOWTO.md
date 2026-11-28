@@ -26,6 +26,7 @@ my-app/
 ├── .gitattributes              # 改行コード LF 統一（既存リポジトリでは非破壊で保持）
 ├── .claude/settings.json       # Claude Code 設定
 ├── .codex/config.toml          # Codex CLI 設定
+├── .codex/rules/reifu.rules    # Codex CLI 禁止コマンドルール（deny_commands から生成）
 ├── .gemini/settings.json       # Gemini CLI 設定
 ├── docs/
 │   ├── design/                 # 【常に最新】全体設計（ファイル / DB / ADR 含む）

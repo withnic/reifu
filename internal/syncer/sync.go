@@ -24,6 +24,7 @@ import (
 
 const MasterPath = ".reifu.jsonc"
 const StatePath = ".reifu.state.json"
+const CodexRulesPath = ".codex/rules/reifu.rules"
 
 var targetPaths = map[model.AgentName]string{
 	model.AgentClaude: ".claude/settings.json",
@@ -47,11 +48,18 @@ type Result struct {
 }
 
 type projectSnapshot struct {
-	config model.ReifuConfig
-	master []byte
-	state  *model.ReifuState
-	files  map[model.AgentName][]byte
-	result Result
+	config     model.ReifuConfig
+	master     []byte
+	state      *model.ReifuState
+	files      map[model.AgentName][]byte
+	codexRules []byte
+	result     Result
+}
+
+type codexRulesChange struct {
+	write  bool
+	remove bool
+	data   []byte
 }
 
 // Inspect reports target drift and skill integrity without writing files.
@@ -94,7 +102,7 @@ func PlanNewProject(cfg model.ReifuConfig, options Options, master []byte) (Resu
 		result.Targets[agent] = model.TargetReport{Path: targetPaths[agent], Status: model.StatusStateMissing}
 	}
 	snapshot := projectSnapshot{config: cfg, master: master}
-	_, _, _, err := snapshot.plan(options, skillPlan{}, &result)
+	_, _, _, _, err := snapshot.plan(options, skillPlan{}, &result)
 	return result, err
 }
 
@@ -110,7 +118,7 @@ func sync(root string, options Options, proposed []byte) (result Result, err err
 			return err
 		}
 		result.Skills = skills.reports
-		master, targets, state, err := snapshot.plan(options, skills, &result)
+		master, targets, rulesChange, state, err := snapshot.plan(options, skills, &result)
 		if wErr := writeWarnings(options.Warnings, result.Warnings); wErr != nil {
 			return wErr
 		}
@@ -139,6 +147,21 @@ func sync(root string, options Options, proposed []byte) (result Result, err err
 				if err := fsx.WriteFileAtomic(root, target, data); err != nil {
 					return err
 				}
+			}
+		}
+		if rulesChange.write {
+			if err := fsx.EnsureDirWithinRoot(root, path.Dir(CodexRulesPath)); err != nil {
+				return err
+			}
+			if err := fsx.WriteFileAtomic(root, CodexRulesPath, rulesChange.data); err != nil {
+				return err
+			}
+		} else if rulesChange.remove {
+			if err := fsx.ValidateWithinRoot(root, CodexRulesPath); err != nil {
+				return err
+			}
+			if err := os.Remove(filepath.Join(root, filepath.FromSlash(CodexRulesPath))); err != nil && !errors.Is(err, os.ErrNotExist) {
+				return fmt.Errorf("remove %s: %w", CodexRulesPath, err)
 			}
 		}
 		return fsx.WriteFileAtomic(root, StatePath, state)
@@ -200,8 +223,27 @@ func readProject(root string, create bool, proposed []byte) (projectSnapshot, er
 				return snapshot, err
 			}
 			snapshot.files[agent] = data
+			if agent == model.AgentCodex {
+				rulesData, err := readOptional(root, CodexRulesPath)
+				if err != nil {
+					return snapshot, err
+				}
+				snapshot.codexRules = rulesData
+			}
 		}
 		status := Detect(snapshot.state, agent, masterHash, snapshot.files[agent], info != nil, create || snapshot.config.Agents.CreateMissing)
+		if agent == model.AgentCodex && (status == model.StatusInSync || status == model.StatusMasterUpdated) && snapshot.state != nil {
+			if prev, tracked := snapshot.state.Targets[agent]; tracked && prev.RulesPath != "" {
+				rulesChanged := snapshot.codexRules == nil || SHA256(snapshot.codexRules) != prev.RulesFileSHA256
+				if rulesChanged {
+					if status == model.StatusMasterUpdated {
+						status = model.StatusConflict
+					} else {
+						status = model.StatusDrifted
+					}
+				}
+			}
+		}
 		snapshot.result.Targets[agent] = model.TargetReport{Path: target, Status: status}
 	}
 	return snapshot, nil
@@ -244,7 +286,7 @@ func readOptional(root, target string) ([]byte, error) {
 	return data, nil
 }
 
-func (s projectSnapshot) plan(options Options, skills skillPlan, result *Result) ([]byte, map[model.AgentName][]byte, []byte, error) {
+func (s projectSnapshot) plan(options Options, skills skillPlan, result *Result) ([]byte, map[model.AgentName][]byte, codexRulesChange, []byte, error) {
 	var sources []importSource
 	var divergent []string
 	for _, agent := range s.config.Agents.Targets {
@@ -255,7 +297,7 @@ func (s projectSnapshot) plan(options Options, skills skillPlan, result *Result)
 		}
 	}
 	if len(divergent) != 0 && !options.Import && !options.Force {
-		return nil, nil, nil, &model.ExitError{Code: model.ExitDrift, Err: fmt.Errorf("%s changed externally; use --import or --force", strings.Join(divergent, ", "))}
+		return nil, nil, codexRulesChange{}, nil, &model.ExitError{Code: model.ExitDrift, Err: fmt.Errorf("%s changed externally; use --import or --force", strings.Join(divergent, ", "))}
 	}
 	master := s.master
 	cfg := s.config
@@ -265,17 +307,17 @@ func (s projectSnapshot) plan(options Options, skills skillPlan, result *Result)
 		master, importWarnings, err = importCommands(master, cfg, s.state, sources, options.Force)
 		result.Warnings = append(result.Warnings, importWarnings...)
 		if err != nil {
-			return nil, nil, nil, err
+			return nil, nil, codexRulesChange{}, nil, err
 		}
 		if !bytes.Equal(master, s.master) {
 			master = normalizedText(master)
 			cfg = model.ReifuConfig{}
 			if err := jsonc.Unmarshal(master, &cfg); err != nil {
-				return nil, nil, nil, fmt.Errorf("parse imported %s: %w", MasterPath, err)
+				return nil, nil, codexRulesChange{}, nil, fmt.Errorf("parse imported %s: %w", MasterPath, err)
 			}
 			cfg.ApplyDefaults()
 			if err := cfg.Validate(); err != nil {
-				return nil, nil, nil, fmt.Errorf("validate imported %s: %w", MasterPath, err)
+				return nil, nil, codexRulesChange{}, nil, fmt.Errorf("validate imported %s: %w", MasterPath, err)
 			}
 			result.ChangedPaths = append(result.ChangedPaths, MasterPath)
 		}
@@ -289,6 +331,7 @@ func (s projectSnapshot) plan(options Options, skills skillPlan, result *Result)
 		ManagedSkills:   skills.managed,
 	}
 	targets := make(map[model.AgentName][]byte)
+	var rulesChange codexRulesChange
 	for _, agent := range cfg.Agents.Targets {
 		report := result.Targets[agent]
 		if report.Status == model.StatusSkipped {
@@ -302,11 +345,24 @@ func (s projectSnapshot) plan(options Options, skills skillPlan, result *Result)
 		if agent != model.AgentCodex {
 			command = compiler.ResolveVerifyCommand(cfg.Hooks, options.TargetOS, options.NoHooks)
 		}
+		var codexRulesOut []byte
+		var hasCodexRules bool
+		if agent == model.AgentCodex {
+			var err error
+			codexRulesOut, hasCodexRules, err = compiler.CompileCodexRules(cfg)
+			if err != nil {
+				return nil, nil, codexRulesChange{}, nil, fmt.Errorf("compile %s: %w", CodexRulesPath, err)
+			}
+		}
+		codexRulesUnchanged := agent != model.AgentCodex ||
+			(hasCodexRules && previous.RulesPath == CodexRulesPath && previous.RulesFileSHA256 == SHA256(codexRulesOut) && bytes.Equal(s.codexRules, codexRulesOut)) ||
+			(!hasCodexRules && previous.RulesPath == "" && s.codexRules == nil)
 		if report.Status == model.StatusInSync && next.MasterSHA256 == s.state.MasterSHA256 &&
 			command == previous.AppliedVerifyCommand &&
-			targetEnvUnchanged(agent, cfg, previous, options.TargetOS) {
+			targetEnvUnchanged(agent, cfg, previous, options.TargetOS) &&
+			codexRulesUnchanged {
 			if err := captureAllowRules(agent, report.Path, s.files[agent], &previous); err != nil {
-				return nil, nil, nil, err
+				return nil, nil, codexRulesChange{}, nil, err
 			}
 			next.Targets[agent] = previous
 			continue
@@ -322,12 +378,24 @@ func (s projectSnapshot) plan(options Options, skills skillPlan, result *Result)
 			out, applied, err = compiler.CompileGemini(existing, cfg, previous, options.TargetOS, options.NoHooks)
 		case model.AgentCodex:
 			out, err = compiler.CompileCodex(existing, cfg)
+			if err == nil && hasCodexRules {
+				applied.AppliedDenyCommands = slices.Clone(cfg.Permissions.DenyCommands)
+				applied.RulesPath = CodexRulesPath
+				applied.RulesFileSHA256 = SHA256(codexRulesOut)
+				if !bytes.Equal(codexRulesOut, s.codexRules) {
+					rulesChange = codexRulesChange{write: true, data: codexRulesOut}
+					result.ChangedPaths = append(result.ChangedPaths, CodexRulesPath)
+				}
+			} else if err == nil && !hasCodexRules && previous.RulesPath != "" && s.codexRules != nil {
+				rulesChange = codexRulesChange{remove: true}
+				result.ChangedPaths = append(result.ChangedPaths, CodexRulesPath)
+			}
 		}
 		if err != nil {
-			return nil, nil, nil, fmt.Errorf("compile %s: %w", report.Path, err)
+			return nil, nil, codexRulesChange{}, nil, fmt.Errorf("compile %s: %w", report.Path, err)
 		}
 		if !utf8.Valid(out) {
-			return nil, nil, nil, fmt.Errorf("compile %s: invalid UTF-8", report.Path)
+			return nil, nil, codexRulesChange{}, nil, fmt.Errorf("compile %s: invalid UTF-8", report.Path)
 		}
 		applied.Path = report.Path
 		applied.Exists = true
@@ -336,7 +404,7 @@ func (s projectSnapshot) plan(options Options, skills skillPlan, result *Result)
 			applied.AppliedVerifySteps = cloneSteps(cfg.Workflow.VerifySteps)
 		}
 		if err := captureAllowRules(agent, report.Path, out, &applied); err != nil {
-			return nil, nil, nil, err
+			return nil, nil, codexRulesChange{}, nil, err
 		}
 		next.Targets[agent] = applied
 		if command != "" && (command != previous.AppliedVerifyCommand ||
@@ -360,15 +428,15 @@ func (s projectSnapshot) plan(options Options, skills skillPlan, result *Result)
 	if s.state != nil && len(result.ChangedPaths) == 0 &&
 		next.MasterSHA256 == s.state.MasterSHA256 && reflect.DeepEqual(next.Targets, s.state.Targets) &&
 		maps.EqualFunc(next.ManagedSkills, s.state.ManagedSkills, slices.Equal[[]string]) {
-		return master, targets, nil, nil
+		return master, targets, codexRulesChange{}, nil, nil
 	}
 	next.LastSyncedAt = time.Now().UTC()
 	state, err := encodeState(next)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, codexRulesChange{}, nil, err
 	}
 	result.ChangedPaths = append(result.ChangedPaths, StatePath)
-	return master, targets, state, nil
+	return master, targets, rulesChange, state, nil
 }
 
 func encodeState(state model.ReifuState) ([]byte, error) {

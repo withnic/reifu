@@ -291,6 +291,10 @@ type ReifuConfig struct {
 * **TOML パーサー/ライター仕様（ゼロ依存・インジェクション耐性）**:
   * 既存の `.codex/config.toml` を行単位で解析し、管理対象キー（ルート直下の `approval_policy`, `sandbox_mode`、および `[sandbox_workspace_write]` 配下の `network_access`）のみ値を置換・追記し、既存のコメントや他セクション（`[mcp_servers.*]` 等）は完全に保持する。
   * 書き出す値は 2.4 の列挙値バリデーションを通過した値のみを許可し、文字列は必ず二重引用符でクオートして TOML セクション／キー注入を防ぐ。
+* **Execpolicy 禁止コマンドルール（`.codex/rules/reifu.rules`）**:
+  * `permissions.deny_commands` が非空の場合、Codex CLI が自動読み込みする `.codex/rules/reifu.rules` に `prefix_rule(pattern = [...], decision = "forbidden", justification = "Blocked by reifu deny_commands")` をコンパイル出力する（`deny_commands` が空になった場合は `reifu.rules` を安全削除し、ユーザー独自の `.codex/rules/*.rules` は保持する）。
+  * Windows の大文字小文字非区別コマンド（`Remove-Item` / `rd` / `rmdir` / `del` / `erase`）は選択肢リスト（例: `[["rd", "RD"], ["/s", "/S"]]`）へ展開し、`git branch -D` 等は大文字小文字を維持する。
+  * `.reifu.state.json` の `targets.codex` に `rules_path` / `rules_file_sha256` を記録し、外部変更をドリフト検知する。
 
 ## **4.4 `reifu run` エージェント起動定義・`{prompt}` 引数展開・`agy` セッション設定（`--settings`）**
 
