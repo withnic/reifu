@@ -54,9 +54,10 @@ func RenderWithOptions(cfg model.ReifuConfig, opts RenderOptions) (map[string][]
 		HasSourceSpec: opts.HasSourceSpec,
 	}
 	files := map[string]string{
-		"AGENTS.md":    "common/AGENTS.md.tmpl",
-		".gitignore":   "common/gitignore.tmpl",
-		".reifu.jsonc": "common/reifu.jsonc.tmpl",
+		"AGENTS.md":      "common/AGENTS.md.tmpl",
+		".gitattributes": "common/gitattributes.tmpl",
+		".gitignore":     "common/gitignore.tmpl",
+		".reifu.jsonc":   "common/reifu.jsonc.tmpl",
 	}
 	if opts.Docs {
 		files["docs/specs/README.md"] = "specs/README.md.tmpl"

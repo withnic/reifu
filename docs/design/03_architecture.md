@@ -95,6 +95,7 @@ reifu/
 │   │   └── embedded/                   # go:embed 対象テンプレート群
 │   │       ├── common/
 │   │       │   ├── AGENTS.md.tmpl
+│   │       │   ├── gitattributes.tmpl
 │   │       │   ├── reifu.jsonc.tmpl
 │   │       │   └── gitignore.tmpl
 │   │       ├── docs/

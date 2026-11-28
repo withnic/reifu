@@ -33,13 +33,18 @@ func TestPresetsLoadAndRenderBuiltins(t *testing.T) {
 				t.Fatal(err)
 			}
 			for _, required := range []string{
-				"AGENTS.md", ".gitignore", ".reifu.jsonc",
+				"AGENTS.md", ".gitattributes", ".gitignore", ".reifu.jsonc",
 				"docs/design/01_project_overview.md", "docs/design/02_data_modeling.md",
 				"docs/design/03_architecture.md", "docs/specs/README.md",
 				"prompts/README.md", "prompts/phase0.md", "prompts/add_feature.md", "prompts/review.md",
 			} {
 				if len(files[required]) == 0 {
 					t.Errorf("missing rendered file %s", required)
+				}
+			}
+			for _, attr := range []string{"* text=auto eol=lf\n", "*.bat text eol=crlf\n", "*.cmd text eol=crlf\n"} {
+				if !bytes.Contains(files[".gitattributes"], []byte(attr)) {
+					t.Errorf(".gitattributes missing %q:\n%s", attr, files[".gitattributes"])
 				}
 			}
 			if _, ok := files["prompts/phases/.gitkeep"]; !ok {
@@ -95,8 +100,8 @@ func TestPresetsLoadAndRenderBuiltins(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if len(noDocs) != 3 {
-				t.Fatalf("expected 3 files with docs=false, got %d", len(noDocs))
+			if len(noDocs) != 4 {
+				t.Fatalf("expected 4 files with docs=false, got %d", len(noDocs))
 			}
 		})
 	}

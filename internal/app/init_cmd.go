@@ -181,6 +181,9 @@ func (c CLI) setupProject(command string, args []string, requireNew bool) error 
 					if bytes.Equal(current, proposed) {
 						continue
 					}
+					if target == ".gitattributes" && !*force {
+						continue
+					}
 					if target != ".gitignore" && !*force {
 						return fmt.Errorf("initialize %s: file exists (use --force)", target)
 					}

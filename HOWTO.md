@@ -23,6 +23,7 @@ my-app/
 ├── GEMINI.md                   # AGENTS.md へのハードリンク
 ├── .reifu.jsonc                # 全エージェント設定の正本（SSOT）
 ├── .reifu.state.json           # 同期スナップショット（.gitignore 済み）
+├── .gitattributes              # 改行コード LF 統一（既存リポジトリでは非破壊で保持）
 ├── .claude/settings.json       # Claude Code 設定
 ├── .codex/config.toml          # Codex CLI 設定
 ├── .gemini/settings.json       # Gemini CLI 設定

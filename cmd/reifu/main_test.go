@@ -657,6 +657,7 @@ func TestProjectWorkflow(t *testing.T) {
 	_, warnings := s.run(0, "init", s.root, "--name", "phase-3", "--preset", "go-cli", "--link-mode", "hard")
 	contains(t, warnings, "applying verification hook")
 	contains(t, s.read("AGENTS.md"), "go test ./...")
+	contains(t, s.read(".gitattributes"), "* text=auto eol=lf")
 	contains(t, s.read("prompts/phase0.md"), "{{ .Name }}")
 	for _, entry := range []string{".reifu.state.json", ".reifu.lock", ".reifu.tmp.*"} {
 		contains(t, s.read(".gitignore"), entry)
@@ -817,6 +818,21 @@ func TestInitOptions(t *testing.T) {
 		missing(t, filepath.Join(s.root, filename))
 	}
 	contains(t, s.read("AGENTS.md"), "npm run build")
+	contains(t, s.read(".gitattributes"), "* text=auto eol=lf")
+
+	// Existing .gitattributes is preserved on init without --force, and replaced with --force.
+	preserveRoot := filepath.Join(tmp, "preserve-attrs")
+	if err := os.MkdirAll(filepath.Join(preserveRoot, ".git"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	p := cliTest{t: t, root: preserveRoot, presets: filepath.Join(tmp, "presets")}
+	p.write(".gitattributes", "* text=auto\n")
+	p.run(0, "init", preserveRoot, "--preset", "minimal", "--no-docs", "--no-settings", "--link-mode", "copy")
+	if got := p.read(".gitattributes"); got != "* text=auto\n" {
+		t.Fatalf("existing .gitattributes was overwritten: %q", got)
+	}
+	p.run(0, "init", preserveRoot, "--preset", "minimal", "--no-docs", "--no-settings", "--link-mode", "copy", "--force")
+	contains(t, p.read(".gitattributes"), "* text=auto eol=lf")
 	var cfg model.ReifuConfig
 	if err := jsonc.Unmarshal([]byte(s.read(".reifu.jsonc")), &cfg); err != nil {
 		t.Fatal(err)

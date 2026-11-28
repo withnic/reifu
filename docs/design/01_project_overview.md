@@ -23,7 +23,7 @@
    * `.reifu.jsonc`（プロジェクトローカル設定マスター）
    * `.claude/settings.json`、`.codex/config.toml`、`.gemini/settings.json`（`.reifu.jsonc` からコンパイル生成）
    * `.reifu.state.json`（同期状態スナップショット：`.gitignore` に自動追加）
-   * `.gitignore`（AI作業用一時ファイル・ロックファイル除外済み）
+   * `.gitignore`（AI作業用一時ファイル・ロックファイル除外済み）および `.gitattributes`（LF統一・Windows バッチのみ CRLF 例外。既存時は非破壊で保持）
    * `docs/design/01_project_overview.md` 〜 `03_architecture.md`（全体設計正本雛形）
    * `docs/specs/README.md`（機能仕様書兼チェックリスト保管場所）
    * `prompts/phase0.md` / `add_feature.md` / `review.md`（初回設計・機能追加・共通レビュー用プロンプト）
