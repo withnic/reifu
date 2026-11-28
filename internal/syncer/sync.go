@@ -60,7 +60,9 @@ func Inspect(root string) (Result, error) {
 	if err != nil {
 		return snapshot.result, err
 	}
-	plan, err := planSkills(root, snapshot.config, snapshot.state, Options{}, true, false)
+	// Like target settings, skills under a missing agent directory are skipped
+	// (sync would not create them), so they are not reported as issues.
+	plan, err := planSkills(root, snapshot.config, snapshot.state, Options{}, true, true)
 	snapshot.result.Skills = plan.reports
 	snapshot.result.HasSkillIssues = plan.issues
 	return snapshot.result, err

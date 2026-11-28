@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -158,6 +159,50 @@ func TestPresetsOverrideAndSecurity(t *testing.T) {
 	}
 	if _, _, err := presets.Load("broken"); err == nil || !strings.Contains(err.Error(), "validate preset") {
 		t.Fatalf("expected validation error for broken preset: %v", err)
+	}
+}
+
+func TestRenderSkillsSectionRoundTrip(t *testing.T) {
+	presets := Presets{Dir: filepath.Join(t.TempDir(), "presets")}
+	_, base, err := presets.Load("go-cli")
+	if err != nil {
+		t.Fatal(err)
+	}
+	base.Project.Name = "skills-app"
+	disabled := false
+	cases := map[string]model.SkillsConfig{
+		"omitted":     {},
+		"disabled":    {Enabled: &disabled},
+		"source only": {Source: "shared/skills"},
+		"no targets":  {Targets: []string{}},
+		"targets":     {Targets: []string{".claude/skills"}},
+	}
+	for name, skills := range cases {
+		t.Run(name, func(t *testing.T) {
+			cfg := base
+			cfg.Skills = skills
+			files, err := Render(cfg, false)
+			if err != nil {
+				t.Fatal(err)
+			}
+			rendered := files[".reifu.jsonc"]
+			if hasSkills := bytes.Contains(rendered, []byte(`"skills"`)); hasSkills == (name == "omitted") {
+				t.Fatalf("unexpected skills section presence:\n%s", rendered)
+			}
+			var parsed model.ReifuConfig
+			if err := jsonc.Unmarshal(rendered, &parsed); err != nil {
+				t.Fatalf("rendered .reifu.jsonc invalid: %v\n%s", err, rendered)
+			}
+			parsed.ApplyDefaults()
+			if err := parsed.Validate(); err != nil {
+				t.Fatalf("rendered .reifu.jsonc failed validation: %v\n%s", err, rendered)
+			}
+			if parsed.SkillsEnabled() != cfg.SkillsEnabled() || parsed.EffectiveSkillsSource() != cfg.EffectiveSkillsSource() ||
+				!slices.Equal(parsed.EffectiveSkillsTargets(parsed.Agents.Targets), cfg.EffectiveSkillsTargets(cfg.Agents.Targets)) ||
+				(parsed.Skills.Targets == nil) != (cfg.Skills.Targets == nil) {
+				t.Fatalf("skills did not round-trip: got %+v want %+v\n%s", parsed.Skills, cfg.Skills, rendered)
+			}
+		})
 	}
 }
 

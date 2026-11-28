@@ -279,6 +279,10 @@ func TestSyncSkills(t *testing.T) {
 	if got := run(Options{}); len(got.ChangedPaths) != 0 {
 		t.Fatalf("missing agent directory: %+v", got)
 	}
+	// Status skips skills under a missing agent directory, like sync does.
+	if got, err := Inspect(root); err != nil || got.Skills != nil || got.HasSkillIssues {
+		t.Fatalf("inspect with missing agent directory: %+v, %v", got, err)
+	}
 	if got := run(Options{Create: true, DryRun: true}); !slices.Contains(got.ChangedPaths, dest) {
 		t.Fatalf("missing skill in preview: %+v", got)
 	}

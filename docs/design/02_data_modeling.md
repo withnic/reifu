@@ -14,7 +14,7 @@
   * `AGENTS.md`（正本）
   * `CLAUDE.md`、`GEMINI.md`（`AGENTS.md` へのハードリンク／シンボリックリンク／コピー）
 
-`.reifu.state.json` の任意フィールド `managed_skills` は、同期先ディレクトリをキーに管理済みスキル名の配列を保持する。削除済みの正本に対応するリンクのクリーンアップに使用する。検査対象がある場合に限り、`status --json` は `skills` にリンク状態を出力する。
+`.reifu.state.json` の任意フィールド `managed_skills` は、同期先ディレクトリをキーに管理済みスキル名の配列を保持する。削除済みの正本に対応するリンクのクリーンアップに使用する。検査対象がある場合に限り、`status --json` は `skills` にリンク状態を出力する。親エージェントディレクトリ（例: `.claude/`）がなく `agents.create_missing: false` の宛先は、`sync` がスキップするため `status` でも検査対象外とする（`link --check` は `link` が作成するので検査する）。
 
 # **2\. `.reifu.jsonc` スキーマ定義**
 

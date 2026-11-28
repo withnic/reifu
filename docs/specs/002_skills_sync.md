@@ -118,6 +118,7 @@ Claude Code / Codex CLI / Gemini CLI / Antigravity の 4 エージェントは�
 * **`reifu status [dir]`**:
   * `StatusReport` に `Skills []LinkReport \`json:"skills,omitempty"\`` を追加する（スキル対象がない場合は省略され既存 JSON と完全互換）。
   * スキルリンクに不整合がある場合は `has_issues: true` とし、`--quiet` 時は Exit `2` を返す。
+  * 宛先の親エージェントディレクトリ（例: `.claude/`）が存在せず `agents.create_missing: false` の宛先は、`sync` と同じく対象外として報告しない（ターゲット設定の `SKIPPED` と同じ扱い）。`reifu link --check` は `link` が親ディレクトリを作成するため、従来どおり `MISSING` として報告する。
 * **`reifu sync [dir]`**:
   * `.claude/` ディレクトリが存在する（または `--create` / `agents.create_missing: true`）かつ `.agents/skills/`（または `managed_skills`）がある場合、スキルリンクの同期・クリーンアップを実行し、`ChangedPaths` と `.reifu.state.json` の `managed_skills` を更新する（`--dry-run` ではプレビューのみ）。
   * 既存の非破壊原則に従い、既存と同名の管理外ディレクトリが `.claude/skills/<name>` にある場合は `--force` なしでエラー終了する。
