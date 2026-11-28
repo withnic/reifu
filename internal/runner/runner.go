@@ -16,6 +16,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/withnic/reifu/internal/compiler"
 	"github.com/withnic/reifu/internal/fsx"
 	"github.com/withnic/reifu/internal/model"
 	"github.com/withnic/reifu/internal/sysenv"
@@ -59,6 +60,8 @@ type execution struct {
 	run                       model.RunState
 	implementer, reviewer     AgentCommand
 	implementPath, reviewPath string
+	agySettingsRel            string
+	agySettingsData           []byte
 	gitRepo                   bool
 	eventMu                   sync.Mutex
 }
@@ -292,7 +295,29 @@ func (e *execution) prepare() error {
 			return err
 		}
 	}
-	for _, rel := range []string{checkpoint, e.run.RunDir + "/run.json", e.run.RunDir + "/summary.md", ".reifu/run.lock"} {
+	needsAgyImpl := !e.implementer.IsCustom && e.implementer.Name == "agy"
+	needsAgyRev := !e.run.NoReview && !e.reviewer.IsCustom && e.reviewer.Name == "agy"
+	if needsAgyImpl || needsAgyRev {
+		data, ok, err := compiler.CompileAgySettings(e.Config)
+		if err != nil {
+			return err
+		}
+		if ok {
+			e.agySettingsRel = e.run.RunDir + "/agy-settings.json"
+			e.agySettingsData = data
+			if needsAgyImpl {
+				e.implementer = withAgySettings(e.implementer, e.agySettingsRel)
+			}
+			if needsAgyRev {
+				e.reviewer = withAgySettings(e.reviewer, e.agySettingsRel)
+			}
+		}
+	}
+	pathsToCheck := []string{checkpoint, e.run.RunDir + "/run.json", e.run.RunDir + "/summary.md", ".reifu/run.lock"}
+	if e.agySettingsRel != "" {
+		pathsToCheck = append(pathsToCheck, e.agySettingsRel)
+	}
+	for _, rel := range pathsToCheck {
 		if _, err := projectPath(e.Root, rel); err != nil {
 			return err
 		}
@@ -410,6 +435,11 @@ func (e *execution) execute(ctx context.Context) (runErr error) {
 	}
 	if err := fsx.EnsureDirWithinRoot(e.Root, e.run.RunDir); err != nil {
 		return err
+	}
+	if e.agySettingsRel != "" {
+		if err := fsx.WriteFileAtomic(e.Root, e.agySettingsRel, e.agySettingsData); err != nil {
+			return err
+		}
 	}
 	if err := e.save(); err != nil {
 		return err

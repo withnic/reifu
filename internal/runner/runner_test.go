@@ -40,6 +40,32 @@ func TestHelperAgentProcess(t *testing.T) {
 		time.Sleep(10 * time.Second)
 		os.Exit(0)
 	}
+	if os.Getenv("REIFU_HELPER_MODE") == "prompt-arg" {
+		input, err := io.ReadAll(os.Stdin)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(input) != 0 {
+			fmt.Fprintf(os.Stderr, "expected empty stdin in prompt-arg mode, got %d bytes\n", len(input))
+			os.Exit(4)
+		}
+		var role, prompt string
+		for i, arg := range os.Args {
+			if arg == "--" && i+2 < len(os.Args) {
+				role = os.Args[i+1]
+				raw := os.Args[i+2]
+				if after, ok := strings.CutPrefix(raw, "--print="); ok {
+					prompt = after
+				} else {
+					prompt = raw
+				}
+				break
+			}
+		}
+		put(t, ".", "captured-"+role+".txt", prompt)
+		fmt.Fprintf(os.Stdout, "arg-%s ok\n", role)
+		os.Exit(0)
+	}
 	input, err := io.ReadAll(os.Stdin)
 	if err != nil {
 		t.Fatal(err)
@@ -222,8 +248,8 @@ func TestResolveAgent(t *testing.T) {
 	cfg := model.ReifuConfig{}
 	for name, want := range map[string][]string{
 		"claude": {"claude", "-p"}, "codex": {"codex", "exec", "-s", "workspace-write", "-"},
-		"gemini": {"gemini", "-p", ""}, "agy": {"agy", "--print", "--mode", "auto"},
-		"antigravity": {"agy", "--print", "--mode", "auto"},
+		"gemini": {"gemini", "-p", ""}, "agy": {"agy", "--mode", "accept-edits", "--print={prompt}"},
+		"antigravity": {"agy", "--mode", "accept-edits", "--print={prompt}"},
 	} {
 		a, err := ResolveAgent(cfg, name)
 		if err != nil || a.IsCustom || !reflect.DeepEqual(a.Argv, want) || a.Name != want[0] {
@@ -840,5 +866,230 @@ func TestRunNotificationOnCancellation(t *testing.T) {
 	if len(got) != 2 || !got[0].Success || got[1].Success ||
 		!strings.Contains(got[1].Message, "canceled at 02_beta (1/2 completed)") {
 		t.Fatalf("unexpected notifications: %+v", got)
+	}
+}
+
+func TestPromptArgAndSpecialChars(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		arg  string
+	}{
+		{"flag-embedded", "--print={prompt}"},
+		{"standalone", "{prompt}"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			opts, progress := fixture(t, false)
+			t.Setenv("REIFU_HELPER_MODE", "prompt-arg")
+			exe, err := filepath.Abs(os.Args[0])
+			if err != nil {
+				t.Fatal(err)
+			}
+			opts.Phase = "01_alpha"
+			opts.Config.Runner.Agents["builder"] = []string{exe, "-test.run=^TestHelperAgentProcess$", "--", "implement", tc.arg}
+			opts.Config.Runner.Agents["critic"] = []string{exe, "-test.run=^TestHelperAgentProcess$", "--", "review", tc.arg}
+			special := "\xef\xbb\xbf---\r\n# 日本語テスト\r\nline with \"quotes\" and 'single'; semi & \\back\\slash\\\r\nlast line\n"
+			wantImpl := "---\n# 日本語テスト\nline with \"quotes\" and 'single'; semi & \\back\\slash\\\nlast line\n"
+			put(t, opts.Root, "prompts/phases/01_alpha.md", special)
+			put(t, opts.Root, reviewPrompt, "レビュー手順: \"チェック\"; 完了\n")
+
+			res, err := Run(context.Background(), opts)
+			if err != nil {
+				t.Fatalf("run: %v\n%s", err, progress)
+			}
+			if res.State.Summary().Status != model.PhaseCompleted {
+				t.Fatalf("state: %+v", res.State)
+			}
+			gotImpl, err := os.ReadFile(filepath.Join(opts.Root, "captured-implement.txt"))
+			if err != nil || string(gotImpl) != wantImpl {
+				t.Fatalf("captured implement prompt = %q (%v), want %q", gotImpl, err, wantImpl)
+			}
+			gotRev, err := os.ReadFile(filepath.Join(opts.Root, "captured-review.txt"))
+			if err != nil {
+				t.Fatalf("read captured review: %v", err)
+			}
+			requireContains(t, string(gotRev), "# Phase 01_alpha", `レビュー手順: "チェック"; 完了`)
+		})
+	}
+}
+
+func TestPromptArgSpillLongPrompt(t *testing.T) {
+	opts, progress := fixture(t, true)
+	t.Setenv("REIFU_HELPER_MODE", "prompt-arg")
+	exe, err := filepath.Abs(os.Args[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	opts.Phase = "01_alpha"
+	opts.Config.Runner.Agents["builder"] = []string{exe, "-test.run=^TestHelperAgentProcess$", "--", "implement", "--print={prompt}"}
+	opts.Config.Runner.Agents["critic"] = []string{exe, "-test.run=^TestHelperAgentProcess$", "--", "review", "--print={prompt}"}
+
+	// Exceeds Windows' 32,767-char command-line limit on both implement and review.
+	longImpl := "# Long Phase\n" + strings.Repeat("日本語と\"引用\";テスト行\n", 2500)
+	longReview := "# Long Review\n" + strings.Repeat("レビュー項目; チェック\n", 2500)
+	put(t, opts.Root, "prompts/phases/01_alpha.md", longImpl)
+	put(t, opts.Root, reviewPrompt, longReview)
+	gitOK(t, opts.Root, "add", ".")
+	gitOK(t, opts.Root, "commit", "-m", "add long prompts")
+
+	res, err := Run(context.Background(), opts)
+	if err != nil {
+		t.Fatalf("run with long prompts: %v\n%s", err, progress)
+	}
+	implSpill := res.State.RunDir + "/01_alpha_implement_prompt.md"
+	revSpill := res.State.RunDir + "/01_alpha_review_prompt.md"
+
+	capturedImpl, err := os.ReadFile(filepath.Join(opts.Root, "captured-implement.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	requireContains(t, string(capturedImpl), implSpill)
+	if len(capturedImpl) >= maxInlineCommandUTF16Len {
+		t.Fatalf("expected short pointer prompt, got %d bytes", len(capturedImpl))
+	}
+	spilledImpl, err := readText(opts.Root, implSpill)
+	if err != nil || string(spilledImpl) != longImpl {
+		t.Fatalf("spilled implement prompt mismatch (len=%d, want=%d, err=%v)", len(spilledImpl), len(longImpl), err)
+	}
+
+	capturedRev, err := os.ReadFile(filepath.Join(opts.Root, "captured-review.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	requireContains(t, string(capturedRev), revSpill)
+	spilledRev, err := readText(opts.Root, revSpill)
+	if err != nil {
+		t.Fatal(err)
+	}
+	requireContains(t, string(spilledRev), "# Phase 01_alpha", "# Long Review")
+
+	tracked := gitOK(t, opts.Root, "ls-files")
+	if strings.Contains(strings.ToLower(tracked), ".reifu") {
+		t.Fatalf("spilled prompt committed: %s", tracked)
+	}
+}
+
+func TestAgySettingsAttachment(t *testing.T) {
+	t.Run("dry-run attaches settings path without writing files", func(t *testing.T) {
+		opts, _ := fixture(t, false)
+		opts.DryRun = true
+		opts.Implementer = "agy"
+		opts.Reviewer = "antigravity"
+		opts.Config.Permissions = model.PermissionsModel{
+			AllowCommands: []string{"go test *", "go version"},
+			DenyCommands:  []string{"git push *", "git reset --hard*", "rm -rf *"},
+			DenyPaths:     []string{".env", ".env.*"},
+		}
+		res, err := Run(context.Background(), opts)
+		if err != nil {
+			t.Fatal(err)
+		}
+		wantSettings := res.Plan.State.RunDir + "/agy-settings.json"
+		wantArgv := []string{"agy", "--mode", "accept-edits", "--settings", wantSettings, "--print={prompt}"}
+		if !reflect.DeepEqual(res.Plan.Implementer.Argv, wantArgv) {
+			t.Fatalf("implementer argv = %q, want %q", res.Plan.Implementer.Argv, wantArgv)
+		}
+		if res.Plan.Reviewer == nil || !reflect.DeepEqual(res.Plan.Reviewer.Argv, wantArgv) {
+			t.Fatalf("reviewer = %+v, want %q", res.Plan.Reviewer, wantArgv)
+		}
+		if _, err := os.Lstat(filepath.Join(opts.Root, ".reifu")); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("dry-run created .reifu: %v", err)
+		}
+	})
+
+	t.Run("empty permissions omits --settings", func(t *testing.T) {
+		opts, _ := fixture(t, false)
+		opts.DryRun = true
+		opts.NoReview = true
+		opts.Implementer = "agy"
+		res, err := Run(context.Background(), opts)
+		if err != nil {
+			t.Fatal(err)
+		}
+		wantArgv := []string{"agy", "--mode", "accept-edits", "--print={prompt}"}
+		if !reflect.DeepEqual(res.Plan.Implementer.Argv, wantArgv) {
+			t.Fatalf("implementer argv = %q, want %q", res.Plan.Implementer.Argv, wantArgv)
+		}
+	})
+
+	t.Run("custom agy override is not mutated", func(t *testing.T) {
+		opts, _ := fixture(t, false)
+		opts.DryRun = true
+		opts.NoReview = true
+		opts.Implementer = "agy"
+		opts.Config.Runner.Agents["agy"] = []string{"agy", "--model", "custom", "--print={prompt}"}
+		opts.Config.Permissions.AllowCommands = []string{"go test *"}
+		res, err := Run(context.Background(), opts)
+		if err != nil {
+			t.Fatal(err)
+		}
+		wantArgv := []string{"agy", "--model", "custom", "--print={prompt}"}
+		if !reflect.DeepEqual(res.Plan.Implementer.Argv, wantArgv) {
+			t.Fatalf("custom agy argv = %q, want %q", res.Plan.Implementer.Argv, wantArgv)
+		}
+	})
+
+	t.Run("execute writes agy-settings.json before invoking agent", func(t *testing.T) {
+		opts, _ := fixture(t, true)
+		t.Setenv("REIFU_HELPER_MODE", "prompt-arg")
+		opts.NoReview = true
+		opts.Phase = "01_alpha"
+		opts.Implementer = "agy"
+		opts.Config.Permissions = model.PermissionsModel{
+			AllowCommands: []string{"go version", "go test *"},
+			DenyCommands:  []string{"git push *", "git reset --hard*", "rm -rf *"},
+			DenyPaths:     []string{".env", ".env.*"},
+		}
+		e := execution{Options: opts}
+		if err := e.prepare(); err != nil {
+			t.Fatal(err)
+		}
+		if e.agySettingsRel == "" {
+			t.Fatal("expected agySettingsRel to be set")
+		}
+		exe, err := filepath.Abs(os.Args[0])
+		if err != nil {
+			t.Fatal(err)
+		}
+		// Keep the generated --settings and --print={prompt} flags, redirecting only the executable to the test helper.
+		e.implementPath = exe
+		e.implementer.Argv = []string{exe, "-test.run=^TestHelperAgentProcess$", "--", "implement", "--print={prompt}"}
+		e.gitRepo = true
+		if err := e.execute(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		settingsBytes, err := readText(opts.Root, e.agySettingsRel)
+		if err != nil {
+			t.Fatal(err)
+		}
+		requireContains(t, string(settingsBytes),
+			`"command(go version)"`,
+			`"command(go test)"`,
+			`"command(regex:go test .*)"`,
+			`"command(git push)"`,
+			`"command(regex:git push .*)"`,
+			`"command(regex:git reset --hard.*)"`,
+			`"command(rm -rf)"`,
+			`"command(regex:rm -rf .*)"`,
+			`"read_file(.env)"`,
+		)
+		tracked := gitOK(t, opts.Root, "ls-files")
+		if strings.Contains(strings.ToLower(tracked), ".reifu") {
+			t.Fatalf("agy-settings.json committed: %s", tracked)
+		}
+	})
+}
+
+func TestCommandLineUTF16Len(t *testing.T) {
+	// ASCII without spaces: `agy --print=hi` + NUL = 15
+	if got := commandLineUTF16Len("agy", []string{"--print=hi"}); got != 15 {
+		t.Fatalf("simple ascii = %d, want 15", got)
+	}
+	// Quotes + spaces trigger quoting and escaping.
+	if got := escapeWindowsArg(`a "b" c\`); got != `"a \"b\" c\\"` {
+		t.Fatalf("escapeWindowsArg = %q", got)
+	}
+	// BMP Japanese char = 1 UTF-16 unit, non-BMP emoji = 2 UTF-16 units.
+	if got := utf16Len("あ😀"); got != 3 {
+		t.Fatalf("utf16Len(あ😀) = %d, want 3", got)
 	}
 }

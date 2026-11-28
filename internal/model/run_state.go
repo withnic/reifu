@@ -24,6 +24,8 @@ func (m NotifyMode) Validate() error {
 	}
 }
 
+const PromptPlaceholder = "{prompt}"
+
 type RunnerConfig struct {
 	Implementer string              `json:"implementer,omitempty"`
 	Reviewer    string              `json:"reviewer,omitempty"`
@@ -46,6 +48,9 @@ func (c RunnerConfig) Validate() error {
 		}
 		if len(argv) == 0 || strings.TrimSpace(argv[0]) == "" {
 			return invalid(field, fmt.Errorf("must start with a command"))
+		}
+		if strings.Contains(argv[0], PromptPlaceholder) {
+			return invalid(fmt.Sprintf("%s[0]", field), fmt.Errorf("executable must not contain %s", PromptPlaceholder))
 		}
 		for i, arg := range argv {
 			if strings.ContainsFunc(arg, unicode.IsControl) {

@@ -303,3 +303,83 @@ func TestCodexNewAndInsertIntoExistingWorkspace(t *testing.T) {
 		t.Fatalf("updated codex:\n%s\nwant:\n%s", updated, wantUpdated)
 	}
 }
+
+func TestCompileAgySettings(t *testing.T) {
+	if out, ok, err := CompileAgySettings(model.ReifuConfig{}); err != nil || ok || out != nil {
+		t.Fatalf("empty config: out=%q ok=%v err=%v", out, ok, err)
+	}
+
+	cfg := model.ReifuConfig{
+		Permissions: model.PermissionsModel{
+			AllowCommands: []string{
+				"go version",
+				"go test *",
+				"go test *", // duplicate
+				"reifu status*",
+				"./scripts/build.sh *",
+				"go test ./...",
+				"foo* bar *",
+				"*",
+			},
+			DenyCommands: []string{
+				"git push *",
+				"git reset --hard*",
+				"rm -rf *",
+				"sudo",
+			},
+			DenyPaths: []string{
+				".env",
+				"./.env",
+				".env.*",
+				"**/.env",
+				"**/.env.*",
+				`secrets\api.key`,
+			},
+		},
+	}
+	out, ok, err := CompileAgySettings(cfg)
+	if err != nil || !ok {
+		t.Fatalf("CompileAgySettings: ok=%v err=%v", ok, err)
+	}
+	if !bytes.HasSuffix(out, []byte("\n")) || bytes.ContainsRune(out, '\r') {
+		t.Fatalf("expected LF-terminated JSON: %q", out)
+	}
+	var parsed struct {
+		Permissions struct {
+			Allow []string `json:"allow"`
+			Deny  []string `json:"deny"`
+		} `json:"permissions"`
+	}
+	if err := json.Unmarshal(out, &parsed); err != nil {
+		t.Fatalf("invalid JSON: %v\n%s", err, out)
+	}
+	wantAllow := []string{
+		"command(go version)",
+		"command(go test)",
+		"command(regex:go test .*)",
+		"command(regex:reifu status.*)",
+		"command(./scripts/build.sh)",
+		`command(regex:\./scripts/build\.sh .*)`,
+		"command(go test ./...)",
+		"command(regex:foo.* bar)",
+		"command(regex:foo.* bar .*)",
+		"command(*)",
+	}
+	wantDeny := []string{
+		"command(git push)",
+		"command(regex:git push .*)",
+		"command(regex:git reset --hard.*)",
+		"command(rm -rf)",
+		"command(regex:rm -rf .*)",
+		"command(sudo)",
+		"command(regex:sudo .*)",
+		"read_file(.env)",
+		"read_file(secrets/api.key)",
+	}
+	if strings.Join(parsed.Permissions.Allow, "\n") != strings.Join(wantAllow, "\n") {
+		t.Fatalf("allow =\n%v\nwant:\n%v", parsed.Permissions.Allow, wantAllow)
+	}
+	if strings.Join(parsed.Permissions.Deny, "\n") != strings.Join(wantDeny, "\n") {
+		t.Fatalf("deny =\n%v\nwant:\n%v", parsed.Permissions.Deny, wantDeny)
+	}
+}

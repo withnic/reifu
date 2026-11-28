@@ -174,6 +174,10 @@ type ReifuConfig struct {
    * `sandbox.approval_policy` は `never` / `on-request` / `untrusted` 以外はエラー（空時は `never`）。
    * **危険構成ガード**: `sandbox.mode == "danger-full-access"` かつ `sandbox.approval_policy == "never"` の同時指定は、完全無確認・無サンドボックス暴走を防ぐためバリデーションエラーとする。
 7. **インジェクション防止（改行・制御文字禁止）**: `allow_commands`、`deny_commands`、`deny_paths`、`hooks.verify_command*`、`project.name` に改行文字（`\r`, `\n`）や NUL バイト（`\x00`）が含まれる場合はエラーとする。
+8. **`runner`**:
+   * `runner.implementer` / `runner.reviewer`: 省略または空文字許容。指定時は `^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$` に一致すること。
+   * `runner.notify`: 省略、空文字、`off`、`end`、`phase` のいずれか。
+   * `runner.agents`: キーは上記パターンに一致し、値は空でない `[]string`（`argv[0]` の空白のみ不可）。全要素に制御文字（`\r`, `\n`, `\x00` 等）を含まないこと。また `argv[0]`（実行ファイル名）にプロンプトプレースホルダ `{prompt}` を含めることは禁止し、`argv[1:]` でのみ許容する。
 
 # **3\. `.reifu.state.json`（状態スナップショット）スキーマ**
 
@@ -266,7 +270,9 @@ type ReifuConfig struct {
   * 既存の霊符管理エントリが存在せず、新 `verify_command` が空でない場合は `hooks.Stop` の先頭に追加する。
 * **非破壊 3-way diff マージ**: 既存の `.claude/settings.json` を `map[string]any` として読み込み、霊符管理外キーはすべて保持する。`permissions.allow` / `permissions.deny` からは、前回の `state.applied_allow_commands` / `applied_deny_commands` / `applied_deny_paths` に含まれていたが今回の `.reifu.jsonc` から削除されたルールのみをピンポイントで除去する。
 
-## **4.2 Gemini CLI / Antigravity（`.gemini/settings.json`）への変換と非破壊マージ**
+## **4.2 Gemini CLI（`.gemini/settings.json`）への変換と非破壊マージ**
+
+※ Antigravity CLI（`agy`）は `.gemini/settings.json` を読み込まないため、`reifu run` 実行時に `.reifu.jsonc` の `permissions` をセッション限定設定（`--settings`）として適用する（4.4 節参照）。
 
 * **コンテキストバインド**: `context.fileName` に `"AGENTS.md"` を設定する。
 * **コマンド変換ルール**:
@@ -285,6 +291,35 @@ type ReifuConfig struct {
 * **TOML パーサー/ライター仕様（ゼロ依存・インジェクション耐性）**:
   * 既存の `.codex/config.toml` を行単位で解析し、管理対象キー（ルート直下の `approval_policy`, `sandbox_mode`、および `[sandbox_workspace_write]` 配下の `network_access`）のみ値を置換・追記し、既存のコメントや他セクション（`[mcp_servers.*]` 等）は完全に保持する。
   * 書き出す値は 2.4 の列挙値バリデーションを通過した値のみを許可し、文字列は必ず二重引用符でクオートして TOML セクション／キー注入を防ぐ。
+
+## **4.4 `reifu run` エージェント起動定義・`{prompt}` 引数展開・`agy` セッション設定（`--settings`）**
+
+### 既定エージェントコマンド一覧
+
+| エージェント名 | 既定 `argv` | プロンプト引き渡し | 備考 |
+| :---- | :---- | :---- | :---- |
+| `claude` | `["claude", "-p"]` | `stdin` | `.claude/settings.json` を参照 |
+| `codex` | `["codex", "exec", "-s", "<sandbox.mode>", "-"]` | `stdin` | `<sandbox.mode>` は `.reifu.jsonc` の `sandbox.mode`（既定 `workspace-write`） |
+| `gemini` | `["gemini", "-p", ""]` | `stdin` | `.gemini/settings.json` を参照 |
+| `agy`（別名: `antigravity`） | `["agy", "--mode", "accept-edits", "--print={prompt}"]` | 引数（`{prompt}` 展開、`stdin` なし） | `.reifu.jsonc` の `permissions` が非空の場合、ラン開始時に `--settings .reifu/runs/<run-id>/agy-settings.json` を自動付与 |
+
+### `{prompt}` プレースホルダと長文プロンプト退避
+
+* `argv[1:]` のいずれかの要素に `{prompt}` が含まれる場合、UTF-8 BOM を除去し改行を LF へ正規化したプロンプト本文をシェル非経由（`exec.CommandContext`）で該当要素へ展開し、`cmd.Stdin` には渡さない（`nil`）。
+* Windows 互換エスケープ後のコマンドライン長が **24,000 UTF-16 コード単位**を超える場合、本文を `.reifu/runs/<run-id>/<phase>_<step>_prompt.md` へ UTF-8 / LF でアトミック書き出しし、`Read the full instructions from <path> and follow them completely.` を `{prompt}` へ展開する。退避後なお 32,767 UTF-16 コード単位を超える場合はエラー終了する。
+
+### Antigravity CLI（`agy`）用セッション設定コンパイル（`internal/compiler.CompileAgySettings`）
+
+`reifu run` で内蔵 `agy`（`IsCustom == false`）を使用する場合、`.reifu.jsonc` の `permissions` から `.reifu/runs/<run-id>/agy-settings.json` を生成して `--settings` へ渡す（`allow`・`deny` がともに空なら省略）。グローバル設定（`~/.gemini/antigravity-cli/settings.json`）は一切変更しない。
+
+* **`permissions.allow_commands` → `permissions.allow`** / **`permissions.deny_commands` → `permissions.deny`**:
+  * `*` 単独 → `"command(*)"`
+  * ワイルドカード（`*` / `?`）なし（例: `go version`）→ `"command(<cmd>)"`。`deny_commands` に限っては Windows の完全一致仕様でサブコマンド／引数付き実行がすり抜けないよう `"command(regex:<quoted> .*)"` も併記する。
+  * 末尾 `" *"`（例: `go test *`、`git push *`、`rm -rf *`）→ `"command(<prefix>)"`（プレフィックスにワイルドカードがある場合は `regex:` 形式）と `"command(regex:<glob→regex>)"` の両方を出力し、POSIX 語プレフィックス一致と Windows 行全体 `regex:` 一致の双方で動作させる。
+  * その他の `*` / `?` を含むパターン（例: `git reset --hard*`、`reifu status*`）→ `"command(regex:<glob→regex>)"`（`regexp.QuoteMeta` 後に `\*` → `.*`、`\?` → `.`）。
+* **`permissions.deny_paths` → `permissions.deny`**:
+  * `agy` の `read_file(<path>)` はパスプレフィックス一致（かつ `read_file` 拒否が `write_file` 拒否を暗黙に含む）であるため、`*` / `?` を含まないリテラルパス（例: `.env`）を正規化して `"read_file(<path>)"` として出力する（glob パターンはスキップ）。
+* 優先順位は `agy` のパーミッションエンジンに従い **`Deny > Ask > Allow`** が保証される。
 
 # **5\. 状態遷移とドリフト検知・逆取り込み（`--import`）アルゴリズム**
 

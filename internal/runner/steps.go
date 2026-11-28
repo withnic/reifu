@@ -291,6 +291,19 @@ func (e *execution) banner(i int, p *model.PhaseRunRecord, step string, a AgentC
 }
 
 func (e *execution) agent(ctx context.Context, i int, p *model.PhaseRunRecord, step string, a AgentCommand, executable, path string, prompt []byte, log io.Writer) error {
+	prompt = bytes.TrimPrefix(prompt, []byte{0xef, 0xbb, 0xbf})
+	var cmdArgs []string
+	var stdin io.Reader
+	if usesPromptArg(a.Argv) {
+		var err error
+		cmdArgs, err = e.buildPromptArgs(executable, a.Argv[1:], p.Name, step, prompt)
+		if err != nil {
+			return fmt.Errorf("%s with %q in %q: %w", step, a.Name, e.Root, err)
+		}
+	} else {
+		cmdArgs = a.Argv[1:]
+		stdin = bytes.NewReader(prompt)
+	}
 	if e.Timeout > 0 {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, e.Timeout)
@@ -346,9 +359,9 @@ func (e *execution) agent(ctx context.Context, i int, p *model.PhaseRunRecord, s
 			}
 		}
 	}()
-	cmd := exec.CommandContext(ctx, executable, a.Argv[1:]...)
+	cmd := exec.CommandContext(ctx, executable, cmdArgs...)
 	cmd.Dir = e.Root
-	cmd.Stdin = bytes.NewReader(bytes.TrimPrefix(prompt, []byte{0xef, 0xbb, 0xbf}))
+	cmd.Stdin = stdin
 	cmd.Stdout, cmd.Stderr = stream, stream
 	cmd.WaitDelay = 2 * time.Second
 	sysenv.KillTreeOnCancel(cmd)
@@ -359,6 +372,28 @@ func (e *execution) agent(ctx context.Context, i int, p *model.PhaseRunRecord, s
 		return fmt.Errorf("%s with %q in %q: %w", step, a.Name, e.Root, err)
 	}
 	return nil
+}
+
+func (e *execution) buildPromptArgs(executable string, templateArgs []string, phaseName, step string, prompt []byte) ([]string, error) {
+	if bytes.IndexByte(prompt, 0) >= 0 {
+		return nil, fmt.Errorf("prompt contains NUL byte and cannot be passed as an argument")
+	}
+	normalized := bytes.ReplaceAll(prompt, []byte("\r\n"), []byte("\n"))
+	normalized = bytes.ReplaceAll(normalized, []byte("\r"), []byte("\n"))
+	args := expandPromptArgs(templateArgs, string(normalized))
+	if commandLineUTF16Len(executable, args) <= maxInlineCommandUTF16Len {
+		return args, nil
+	}
+	promptRel := fmt.Sprintf("%s/%s_%s_prompt.md", e.run.RunDir, phaseName, step)
+	if err := fsx.WriteFileAtomic(e.Root, promptRel, normalized); err != nil {
+		return nil, fmt.Errorf("write spilled prompt %q: %w", promptRel, err)
+	}
+	pointer := fmt.Sprintf("Read the full instructions from %s and follow them completely.", promptRel)
+	args = expandPromptArgs(templateArgs, pointer)
+	if n := commandLineUTF16Len(executable, args); n > maxWindowsCommandUTF16Len {
+		return nil, fmt.Errorf("command line length (%d UTF-16 code units) exceeds the %d-unit Windows limit even after spilling prompt to %q", n, maxWindowsCommandUTF16Len, promptRel)
+	}
+	return args, nil
 }
 
 // agentStream normalizes text across pipe reads, including split UTF-8

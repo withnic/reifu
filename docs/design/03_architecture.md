@@ -41,7 +41,7 @@ reifu/
 ├── .codex/
 │   └── config.toml                     # Codex CLI 用設定（workspace-write & network_access=false）
 ├── .gemini/
-│   └── settings.json                   # Gemini CLI / Antigravity 用設定（AGENTS.md読込 & AfterAgentフック）
+│   └── settings.json                   # Gemini CLI 用設定（AGENTS.md読込 & AfterAgentフック）
 ├── .gitignore
 ├── .reifu.jsonc                        # プロジェクト設定マスター（ドッグフーディング）
 ├── go.mod                              # module github.com/withnic/reifu (go 1.23, 外部requireなし)
@@ -79,6 +79,7 @@ reifu/
 │   │   ├── edit.go                     # コメント保持配列要素挿入＋Unmarshal 自己検証
 │   │   └── strip_test.go
 │   ├── compiler/
+│   │   ├── agy.go
 │   │   ├── claude.go
 │   │   ├── codex.go
 │   │   ├── gemini.go
@@ -210,6 +211,25 @@ reifu/
 * **再開時の作業ツリー**: `--resume` でも未コミット変更の検査は省かない。失敗したステップが残した変更をそのままコミットしないよう、確認した上で `--allow-dirty` を付けて再開する。再開時の `no_review` / `no_commit` は `.reifu.run.json` に記録した値を使う。
 * **コミット済みチェックポイント**: コミット直前に `commit_base`（その時点の HEAD）を保存する。コミット後・状態保存前に中断された場合、再開時に HEAD の親とコミット件名が一致すればそのコミットを再利用し、二重コミットしない。
 * **通知** — ランナーは `--notify` と `runner.notify` から通知のタイミングを決め、`internal/sysenv` が本文をサニタイズして OS ごとの通知を送る。Windows は MessageBeep と OSC 9、macOS は端末ベルと `osascript`、Linux / WSL2 は端末ベルと `notify-send` を使う。端末向けの出力は標準エラーが端末の場合に限る。Windows の OSC 9 は、コンソールの VT 処理（`ENABLE_VIRTUAL_TERMINAL_PROCESSING`）を有効にできた場合だけ書き込み、書き込み後に元のモードへ戻す（旧コンソールにエスケープが生のまま表示されるのを防ぐ）。通知処理はベストエフォートで、外部コマンドは最大 3 秒で打ち切る。`--dry-run`、`CI`、`REIFU_NO_NOTIFY` は通知を抑止する。
+
+## **4.7 ADR（アーキテクチャ決定記録）**
+
+### ADR-001: 引数プロンプト差し込み（`{prompt}`）と長文プロンプトのファイル退避
+
+* **背景**: Antigravity CLI（`agy` 1.5.18）の `--print` / `-p` / `--prompt` はフラグ値としてプロンプト文字列を受け取り、標準入力（`stdin`）から生 Markdown を読まない（`--input-format stream-json` は独自 NDJSON を要求する）。一方、Windows の `CreateProcessW` にはコマンドライン全体で 32,767 UTF-16 コード単位の上限があり、レビュープロンプト（`prompts/review.md`＋差分サマリー）や長大なフェーズ仕様書は上限に達しうる。Linux でも 1 引数あたり `MAX_ARG_STRLEN`（128 KiB）の制約がある。
+* **決定**:
+  1. `runner.agents` の `argv[1:]` に `{prompt}` を含む場合、シェルを介さず `exec.CommandContext` の引数要素へプロンプト本文（BOM 除去・LF 正規化）を展開し、`cmd.Stdin` は `nil` とする。`argv[0]` への `{prompt}` 配置はバリデーションで拒否する。
+  2. Windows 互換エスケープ後のコマンドライン長（UTF-16 コード単位、NUL 終端含む）を全 OS 共通で算出し、**24,000 UTF-16 コード単位**を超える場合は本文を `.reifu/runs/<run-id>/<phase>_<step>_prompt.md` へアトミック書き出しした上で、`Read the full instructions from <path> and follow them completely.` という短い指示文を `{prompt}` へ展開する。退避後なお 32,767 単位を超える場合のみ明確なエラーとする。
+* **採用理由**: 上限超過時にエラー停止する案に比べ、規模の大きいフェーズやレビュー差分でも自動実行が途中で破綻せず完走できる。`.reifu/runs/<run-id>/` はプロジェクトワークスペース配下かつ Git コミット対象外であり、`.gitignore` 配下であっても `agy` から追加権限なしで読み取れることを実機で確認済みである。また全 OS 共通のしきい値（24,000 UTF-16 単位 ≒ 最大約 72 KiB UTF-8）にすることで、Windows の 32,767 上限と Linux の 128 KiB 引数上限の双方を余裕をもって回避しつつ、CI 上でのテスト挙動を決定的に保てる。
+
+### ADR-002: `agy` のヘッドレス実行モード（`--mode accept-edits`）と `--settings` によるセッション権限適用
+
+* **背景**: 公式仕様および `agy` 1.5.18 実機検証の結果、`agy` はプロジェクト内の `.gemini/settings.json` を読み込まず、永続設定はグローバルの `~/.gemini/antigravity-cli/settings.json`（および `~/.gemini/config/projects/`）のみである。また `--mode auto` はビジネス／エンタープライズアカウントやターミナルサンドボックス非対応環境では利用できず `default` モードへフォールバックする。さらにヘッドレス実行では `permissions.allow` に合致しないコマンド実行が自動拒否される。
+* **決定**:
+  1. 内蔵 `agy` の既定起動引数を `["agy", "--mode", "accept-edits", "--print={prompt}"]` とする（`--dangerously-skip-permissions` は既定にしない）。
+  2. `.reifu.jsonc` の `permissions` にルールが存在する場合、`reifu run` が `internal/compiler.CompileAgySettings` で `.reifu/runs/<run-id>/agy-settings.json` を生成し、`--settings <path>` で当該セッションにのみ渡す（`runner.agents.agy` でカスタム定義した場合はユーザー指定引数を改変しない）。
+  3. コマンドルールは `agy` の POSIX 語プレフィックス一致と Windows 行全体 `regex:` 一致の双方で機能するよう `command(...)` と `command(regex:...)` へ変換し、`deny_commands` が `Deny > Ask > Allow` の優先順位で確実に効くようにする。`deny_paths` は `read_file(...)` がパスプレフィックス一致であるためリテラルパスのみ出力する。
+* **採用理由**: `reifu` の「薄いグローバル・自己完結型ローカル」原則を厳守して `~/.gemini/` を一切書き換えず、`reifu sync` の管理対象ファイルやドリフト面も増やさずに `.reifu.jsonc` の `allow_commands` / `deny_commands` / `deny_paths` をそのまま `agy` のヘッドレス実行へ反映できるため。また `--mode accept-edits` を採用することで、アカウント種別やサンドボックス有無に依存せずワークスペース内のファイル編集を自動承認しつつ、コマンド実行は明示的な `allow` / `deny` ルールで安全に制御できる。
 
 # **5\. エージェントディレクトリ存在判定ポリシー**
 

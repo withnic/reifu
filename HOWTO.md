@@ -25,7 +25,7 @@ my-app/
 ├── .reifu.state.json           # 同期スナップショット（.gitignore 済み）
 ├── .claude/settings.json       # Claude Code 設定
 ├── .codex/config.toml          # Codex CLI 設定
-├── .gemini/settings.json       # Gemini CLI / Antigravity 設定
+├── .gemini/settings.json       # Gemini CLI 設定
 ├── docs/
 │   ├── design/                 # 【常に最新】全体設計（ファイル / DB / ADR 含む）
 │   │   ├── 01_project_overview.md
@@ -278,7 +278,7 @@ reifu run --implementer codex --reviewer claude       # 異種ツールでのク
 reifu run --implementer agy --reviewer gemini
 ```
 
-担当を固定する場合は、既存の `.reifu.jsonc` のトップレベルに次の `runner` を追加します。CLI の担当指定で上書きできます。任意の `agents` は起動コマンドと引数の配列で、実行前にコマンドが標準エラーに表示されます。信頼できるプロジェクトの設定とプロンプトで実行してください。
+担当を固定する場合は、既存の `.reifu.jsonc` のトップレベルに次の `runner` を追加します。CLI の担当指定で上書きできます。任意の `agents` は起動コマンドと引数の配列（シェル非経由で直接実行）で、実行前にコマンドが標準エラーに表示されます。信頼できるプロジェクトの設定とプロンプトで実行してください。
 
 ```jsonc
 "runner": {
@@ -286,10 +286,23 @@ reifu run --implementer agy --reviewer gemini
   "reviewer": "claude",
   "notify": "end",
   "agents": {
-    "claude": ["claude", "-p", "--model", "sonnet"]
+    "claude": ["claude", "-p", "--model", "sonnet"],
+    "agy": ["agy", "--mode", "accept-edits", "--print={prompt}"]
   }
 }
 ```
+
+#### エージェント別の既定コマンドとプロンプト引き渡し（`stdin` / `{prompt}`）
+
+| エージェント | 既定の起動引数 | プロンプト渡し方 |
+| --- | --- | --- |
+| `claude` | `["claude", "-p"]` | `stdin` |
+| `codex` | `["codex", "exec", "-s", "<sandbox.mode>", "-"]` | `stdin` |
+| `gemini` | `["gemini", "-p", ""]` | `stdin` |
+| `agy`（`antigravity`） | `["agy", "--mode", "accept-edits", "--print={prompt}"]` | 引数（`{prompt}` 展開、`stdin` なし） |
+
+* **引数へのプロンプト差し込み（`{prompt}`）**: `runner.agents` の 2 番目以降の要素（`argv[1:]`）に `{prompt}` を含めると、プロンプト本文（UTF-8 / LF）を引数として直接渡し、`stdin` は閉じます（`argv[0]` には指定不可）。コマンドライン長が 24,000 UTF-16 コード単位を超える長文プロンプトは、Windows の 32,767 文字上限などを回避するため自動的に `.reifu/runs/<run-id>/<phase>_<step>_prompt.md` へ書き出し、そのファイルを読んで従う短い指示を引数に渡します。
+* **`agy`（Antigravity CLI）のヘッドレス権限**: `agy` はプロジェクト内の `.gemini/settings.json` を読まず永続設定はグローバル `~/.gemini/antigravity-cli/settings.json` のみのため、内蔵 `agy` の実行時に `.reifu.jsonc` の `permissions`（`allow_commands` / `deny_commands` / リテラル `deny_paths`）を `.reifu/runs/<run-id>/agy-settings.json` へ変換し、`--settings` で当該セッションにのみ適用します。グローバル設定は一切変更せず、`--dangerously-skip-permissions` も既定では付与しません（`runner.agents.agy` でカスタム定義した場合は指定引数をそのまま使います）。
 
 `--phase 01_foundation` で 1 件、`--from 01_foundation` でそのフェーズ以降を選べます。実装・レビュー各ステップの制限時間は既定で 30 分です。`--timeout 0` で無制限になります。`--no-review` でレビューを、`--no-commit` で自動コミットを省略できます。
 

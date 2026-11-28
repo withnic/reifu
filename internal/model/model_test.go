@@ -188,7 +188,11 @@ func TestRunnerConfigAndRunID(t *testing.T) {
 	if err != nil || strings.Contains(string(data), `"runner"`) || cfg.Validate() != nil {
 		t.Fatalf("legacy config: %s (%v)", data, err)
 	}
-	cfg.Runner = RunnerConfig{Implementer: "test-1", Reviewer: "Codex", Agents: map[string][]string{"test-1": {"test", ""}}}
+	cfg.Runner = RunnerConfig{Implementer: "test-1", Reviewer: "Codex", Agents: map[string][]string{
+		"test-1": {"test", ""},
+		"arg-1":  {"agy", "--mode", "accept-edits", "--print={prompt}"},
+		"arg-2":  {"my-agent", "-p", "{prompt}"},
+	}}
 	data, err = json.Marshal(cfg)
 	var decoded ReifuConfig
 	if err != nil || json.Unmarshal(data, &decoded) != nil || decoded.Runner.Implementer != "test-1" || decoded.Validate() != nil {
@@ -197,12 +201,19 @@ func TestRunnerConfigAndRunID(t *testing.T) {
 	for _, bad := range []RunnerConfig{
 		{Implementer: "../bad"}, {Reviewer: "-bad"}, {Agents: map[string][]string{"bad/name": {"x"}}},
 		{Agents: map[string][]string{"empty": {}}}, {Agents: map[string][]string{"blank": {"  "}}},
+		{Agents: map[string][]string{"prompt-exe": {"{prompt}", "--flag"}}},
+		{Agents: map[string][]string{"prompt-exe-sub": {"./bin/{prompt}"}}},
 		{Agents: map[string][]string{"control": {"x", "a\rb", "\x00"}}}, {Agents: map[string][]string{"line": {"x", "\n"}}},
 	} {
 		cfg.Runner = bad
 		if err := cfg.Validate(); err == nil {
 			t.Errorf("accepted %#v", bad)
 		}
+	}
+	cfg.Runner = RunnerConfig{Agents: map[string][]string{"bad-exe": {"{prompt}"}}}
+	var exitErr *ExitError
+	if err := cfg.Validate(); !errors.As(err, &exitErr) || exitErr.Field != `runner.agents["bad-exe"][0]` || ExitCodeOf(err) != ExitGeneral {
+		t.Fatalf("prompt in executable error = %v, want runner.agents[\"bad-exe\"][0]", err)
 	}
 	for _, id := range []string{"", "../runs", "..\\runs", "/tmp", "C:run", "a\n", strings.Repeat("a", 65)} {
 		if err := ValidateRunID(id); err == nil {
