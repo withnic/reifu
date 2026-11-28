@@ -97,6 +97,8 @@
   "runner": {
     "implementer": "codex",
     "reviewer": "claude",
+    // 任意: "off"（既定） | "end" | "phase"
+    "notify": "off",
     // 内蔵エージェント（claude / codex / gemini / agy）の起動引数上書きやカスタム定義（シェル非経由）
     "agents": {}
   }
@@ -342,7 +344,7 @@ type ReifuConfig struct {
 | `reifu preset list` | （なし） | 内蔵およびユーザー設定ディレクトリ（`os.UserConfigDir()/reifu/presets/`）のプリセット一覧を表示（オーバーライド元も明示）。 |
 | `reifu preset export <name>` | `--out <dir>` / `--force` | 指定プリセット `<name>` を出力先ディレクトリ（省略時は `os.UserConfigDir()/reifu/presets/`）へ `<name>.jsonc` として書き出す。既存ファイルがある場合は `--force` なしならエラー。 |
 | `reifu hook verify [dir]` | （なし） | `.reifu.jsonc` の `workflow.verify_steps` をシェル非経由で順次実行するクロスプラットフォーム検証フック。`stop_hook_active: true`、`BLOCKED_REPORT.md` 存在、`workflow.require_files` 未存在、未定義 npm スクリプト時は Exit `0` でスキップ。失敗時は `stderr` へ出力し Exit `2`（`stdout` 非汚染）。 |
-| `reifu run [dir]` | `--implementer <agent>` / `--reviewer <agent>` / `--phase <name>` / `--from <name>` / `--no-review` / `--no-commit` / `--allow-dirty` / `--resume` / `--timeout <dur>` / `--dry-run` / `--json` | `prompts/phases/*.md` を辞書順に「実装 → コミット → `prompts/review.md` レビュー → コミット」で自動実行。`claude` / `codex` / `gemini` / `agy`（`antigravity`）対応。進捗を `.reifu.run.json`、ログ・レビュー結果を `.reifu/runs/<run-id>/` へ保存。 |
+| `reifu run [dir]` | `--implementer <agent>` / `--reviewer <agent>` / `--phase <name>` / `--from <name>` / `--no-review` / `--no-commit` / `--allow-dirty` / `--resume` / `--timeout <dur>` / `--notify[=mode]` / `--dry-run` / `--json` | `prompts/phases/*.md` を辞書順に「実装 → コミット → `prompts/review.md` レビュー → コミット」で自動実行。`claude` / `codex` / `gemini` / `agy`（`antigravity`）対応。進捗を `.reifu.run.json`、ログ・レビュー結果を `.reifu/runs/<run-id>/` へ保存。`--notify` で完了／停止時の通知音・OS 通知に対応。 |
 | `reifu logs [dir]` | `--list` / `--run <id>` / `--phase <name>` / `--review` / `-f` (`--follow`) / `--json` | `reifu run` の実行進捗サマリー・実装ログ・レビューレポートを安全に読み取り専用で閲覧（`-f` は都度クローズ方式でロック競合ゼロ）。 |
 
 ## **6.2 `reifu status --json` 出力スキーマ**

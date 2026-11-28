@@ -121,6 +121,10 @@ reifu/
 │   │   ├── detect_unix.go
 │   │   ├── process_windows.go          # 子プロセスツリー終了（taskkill /T /F）
 │   │   ├── process_unix.go             # 子プロセスツリー終了（プロセスグループ SIGKILL）
+│   │   ├── notify.go                   # 完了・停止通知（CI/REIFU_NO_NOTIFY抑止・サニタイズ）
+│   │   ├── notify_windows.go           # Windows MessageBeep + OSC 9 通知
+│   │   ├── notify_darwin.go            # macOS osascript + ベル通知
+│   │   ├── notify_linux.go             # Linux/WSL2 notify-send + ベル通知
 │   │   └── detect_test.go
 │   └── fsx/
 │       ├── pathguard.go                # プロジェクトルート境界・シンボリックリンク脱出検証
